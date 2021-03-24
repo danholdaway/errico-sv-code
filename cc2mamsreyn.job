@@ -1,0 +1,103 @@
+#QSUB -eo -q econ -lM 10.0Mw -lm 9.8Mw  -lT 1600 -lt 1500
+# 46x61x10 HWM .95Mw ,Max Mem 1.2Mw
+# 37x52x32 HWM 1.3 Mw, Max Mem 1.5Mw
+# 96x160x13 HWM 7.1 Mw Max Mem 7Mw
+
+#.******************************************************************
+#.	MM4 PRE-PROCESSOR #1
+#.	INTERPOLATION TO MM4 GRID FROM LARGER DOMAIN.  THE LARGER
+#.      DOMAIN MAY REPRESENT THE CCM GRID OR PERHAPS AN 
+#.      OBSERVATIONAL GRID (E.G. ECMWF DATA).
+#.*******************************************************************
+
+set echo
+
+###	SET TO WORKING DIRECTORY ON CRAY
+cd $TMPDIR
+csh -x << 'JOBEND' >& log
+
+###	ENABLE JOB ACCOUNTING
+ja
+
+
+###	GET IMPORTANT FILES FROM SAGE
+rcp ${MACHINE}:Adj/Prep/Resol2/cc2mams.f    ccmm.f
+rcp ${MACHINE}:Adj/Prep/Resol2/cc2mams.in   ccmm.in
+rcp ${MACHINE}:Adj/Prep/Resol2/sstintreyn.f     sstint.f
+rcp ${MACHINE}:Adj/Prep/skipf.f      skipf.f
+# rcp raeder@chaos.cgd.ucar.edu:Adj/Prep/skipf.f      skipf.f
+
+
+###	GET DATA FILES FROM THE MASS STORAGE SYSTEM
+# all are T42 Gaussian 
+# /TRENBERT/CTGAN/U/ET42950516 is  2x daily, CCM2 hist tape
+#    from 2.5 degree grid
+#    old data has 14 levels, new has 15 levels
+# /TRENBERT/CTEC is 4x daily, P-level his tape < 1/1/93
+#                             CCM2  hist tape  > 1/1/93
+#    1995-1996
+#    from T106 (after Mar 1985)
+# CONVLOW S3
+#  acquire /TRENBERT/CTGAN/U/ET42970616 21 fort.21 
+#  acquire /RAEDER/MAMS/CONVLOW/5070/TERR80 11 fort.11 nocom 6 cos
+#  acquire /RAEDER/MAMS/CONVLOW/5070/SST80 12 fort.12 nocom 6 cos
+# Jrain W2 and W4 (based on Pred D4T1)
+#  acquire /TRENBERT/CTGAN/U/ET42960106 21 fort.21 
+#  acquire /TRENBERT/CTGAN/U/ET42960111 22 fort.22 
+#  acquire /RAEDER/MAMS/PRED/D4/TERRAIN 11 fort.11 nocom 6 cos
+#  acquire /RAEDER/MAMS/PRED/D4/T1/SST 12 fort.12 nocom 6 cos
+# Pred D3T1
+#  acquire /TRENBERT/CTGAN/U/ET42960106 21 fort.21 
+#  acquire /RAEDER/MAMS/PRED/D3old/TERRAIN 11 fort.11 nocom 6 cos
+#  acquire /RAEDER/MAMS/PRED/D3S3/T1/SST 12 fort.12 nocom 6 cos
+# Rolf 4060 60km
+#  acquire /TRENBERT/CTGAN/U/ET42960816 21 fort.21 
+#  acquire /RAEDER/MAMS/ROLF/4060/TERRAIN 11 fort.11 nocom 6 cos
+#  acquire /RAEDER/MAMS/ROLF/4060/960816+1WK/SST 12 fort.12 nocom 6 cos
+# Gulf2 80km and 50km
+  acquire /TRENBERT/CTGAN/U/ET42880211 21 fort.21 
+  acquire /RAEDER/NONLIN/GULF/67x86/TERR50KM 11 fort.11 nocom 6 cos
+  acquire /RAEDER/MAMS/GULF/50KM/67x86/880211+1WK/SST2 12 fort.12 nocom 6 cos
+#   acquire /RAEDER/NONLIN/GULF/67x86/SST50.8195 12 fort.12 nocom 6 cos
+# Can low 80km
+#  acquire /TRENBERT/CTGAN/U/ET42950516 21 fort.21 
+#  acquire /RAEDER/NONLIN/HAMMILL/96x160/TERR30KM 11 fort.11 nocom 6 cos
+#  acquire /RAEDER/NONLIN/HAMMILL/96x160/SST30.8195 12 fort.12 nocom 6 cos
+#  acquire /TRENBERT/CTGAN/U/ET42940716 21 fort.21 
+#  acquire /TRENBERT/CTGAN/U/ET42940721 22 fort.22 
+#  acquire /RAEDER/NONLIN/CANLOW/4354/TERR80KM 11 fort.11 nocom 6 cos
+#  acquire /RAEDER/NONLIN/CANLOW/4354/SST80.8195 12 fort.12 nocom 6 cos
+#  acquire /RMERRICO/ADJOINT/PROGS/OBJECT/LIB1C4 0 libadj.a
+
+
+setenv FILENV ex2
+# assign -a ft11 -b 4 fort.11
+# assign -a ft12 -b 4 fort.12
+assign -a ccmm.in  -f77   fort.13
+assign -a output1 -s bin         fort.20
+
+cat ccmm.f sstint.f skipf.f > combo.f
+f90raed combo.f llu "-e i -r x" MAMS2A2,ncarm,ncaro,ecmfft exec 
+# cftraed combo.f iz gks ncarm,ncaro,ecmfft,adj exec 
+
+rcp combo.out ${MACHINE}:${DATA}/2000/PBLinst/G50x.01.diag
+
+# debug -s xccmm4 -B
+
+# dispose output1 /RAEDER/MAMS/CONVLOW/507020/ANAL/NLMD1 copy 360 \
+#   97061600Z-2012Zx12_40N-100E_fromlib2A2_20levels
+# dispose output1 /RAEDER/MAMS/PRED/D3old/ANAL/NLMD1 copy 360 \
+#   96010812Z-1012Zx12_41N-115E_fromlib2A2_20levels
+# dispose output1 /RAEDER/MAMS/ROLF/4060/2DYINP/NLMD1 copy 360 \
+#   96081600Z-1800Zx12_40N-115E_fromlib2A2_11levels
+# dispose output1 /RAEDER/NONLIN/GULF/678619/5DYINP/NLMD1 copy 360 \
+#   Feb11Z0-Feb15Z12x12H_31N-97E_fromlib2A4_19levels
+dispose output1 /RAEDER/NONLIN/GULF/678620/5DYINP/NLMD1 copy 360 \
+  Feb11Z0-Feb15Z12x12H_31N-97E_fromlib2A4_19levels
+
+ls  -glt
+ja -st
+
+rcp log ${MACHINE}:${DATA}/2000/PBLinst/G50x.01.log
+rsh ${MACHINE} beep
+'JOBEND'

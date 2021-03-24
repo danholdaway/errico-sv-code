@@ -1,0 +1,3535 @@
+#QSUB -eo -lt 5500 -lT 6000 -lm 9.0Mw -lM 10.0Mw -q econ
+#QSUB -A 05010049
+
+# 'c Jrain' marks changes for Tellus paper final figs (4/2002)
+# 'c rrcorr' marks reduced stat output for rain sv study
+
+# Make mods (for adj of div, vort (geop?), modes to this and 
+# then stick in proftsinp
+# Kshapes now takes an argument (itrep) and is not in the map GFLAS
+#   part of the code; each itrep will be able to have a different
+#   box printed, as coded in Kshapes
+# Kplotint also modified to pass itrep through and call Kshapes with
+#   it's new argument
+
+# CLEAN UP TECH NOTE TEST CASE MODS
+
+# The required memory is ~ 1Mw + (10*ni*nj*nk*nkinds) words
+
+cd $TMPDIR 
+setenv NCPUS 1
+csh -x << 'JOBEND' >& log
+
+# Multiple boxes/J domains can be handled by this processor,
+# by using itreps and the modified Kshapes, and Kplotint here
+
+# DO THIS   ;prefix name of files copied to the Sun system
+set outname = '2002/DRI/ANAL40'
+# flds = perts , pert diff, and bs , div,vort,T,q,ps
+# Econt = E norm contribution of KE, APE/thermo, q
+# 'S3IS1V7V-1T2T1' = 'CNVG'
+# set outname = '2002/Qsens/S2SEPRAINdf'
+# set outname = '2002/Qsens/S3NOP2BS24-12'
+# set outname = '2002/Qsens/S3IS1v-1T1'
+# set outname = '2002/Qsens/S2IS7V-1N1p+1'
+# set outname = '2001/Qsens/E4BS2M24'
+# set outname = '1999/RGF/DV24FVD'
+# set outname = '2000/VDA/CNLMH48'
+# set outname = '2000/Jrain/W3MM24NRh'
+# set outname = '2001/Jrain/W3MMVOT1-6T'
+# set outname = '2001/Jrain/W4MMV2-Nah'
+# set outname = '2001/Jrain/W4MMBSTRR'
+# set outname = '2002/Jrain/S3f1-3d'
+#  correlation of Vorticity and Nonconv rain adjoint results
+# set outname = '2000/NRL/MW500a'
+# set outname = '2000/Jacpar/W3T2e'
+# CHANGE mass store dispose name too
+
+# search for "STOP 'NRL'"
+
+# l=linearity combo; NLMdiff vs TLM
+# h=horizontal plots
+
+# Mass Store name for the horizontal field correlations (or 'none')
+set CORNAME = 'none'
+# set CORNAME = '/RAEDER/MARTIN/TE1NN1/CORRELb'
+
+ja
+date > input.info
+echo $outname >> input.info
+echo '~/Adj/Allproc/proc2B1'
+
+cat << 'EOFD' > progd.f
+ 
+cXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+cXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+      PROGRAM proc2B2
+
+c A program for computing the statistics of, and graphing the output
+c (and/or input) from the NLM, the TLM, and the ADJ models.
+
+c------------------------------------------------------------------
+
+c TO USE; 1) set QSUB parameters on the first line (above)
+c         2) set output file names by changing "outname"
+c         3) search for USER and set user-set parameters
+c         4) search for $INIT and set namelist inputs
+c         5) search for SUBROUTINE Kshapes to define extra shapes 
+c            to be plotted 
+c         6) search for '"other"' and install any code necessar
+c            to calculate the field you need
+c         7) search for SUBROUTINE KchngJ to define the calculation
+c            of the change in the forecast aspect
+
+c------------------------------------------------------------------
+
+c Terms
+c    kinds;        1-13 below
+c    fields        u,v,T,ps,z,. . .
+c    times         -3., 0.,1.,3.5,12.,. . . hours
+c    file          groups of fields at various times describing a state 
+c                  of the atmosphere, perturbations of the atmosphere, 
+c                  or the sensitivity of an atmosphere
+c    tape          a "file" may be too large to fit on one tape,
+c                  so 2 or more tapes may be required (see cMSnams)
+c                  (up to 10 tapes, although the mm4 limit is 8)
+c    repetitions   the number of ways a given time will be processed
+
+
+c   kind of input "file"                  character  integer
+c     (10 possibilities)                    label     label
+c   --------------------                    -----     -----
+c  NLM output perturbed field               NLMop       1   
+c  NLM initialized field                    NLMin       2   
+c  NLM output control field                 NLMoc       3   
+c  TLM (perturbation) field                 TLMo1       4   
+c  TLM basic state                          TLMb1       5   
+c  TLM (perturbation) field 2               TLMo2       6   
+c  TLM basic state 2                        TLMb2       7   
+c  ADJ field                                ADJo1       8   
+c  ADJ basic state                          ADJb1       9   
+c  ADJ field 2                              ADJo2       10  
+c  ADJ basic state 2                        ADJb2       11   
+c                                             .          .
+c  other kinds which might be used            .          .
+c  (calculated from the kinds above)          .          .
+c  ---------------------------------          .          .
+c  TLM error field  (e.g.,(4 or 6)-12)      TLMer       12  
+c  difference field (e.g.,1-3, 2-3, etc.  ) fdiff       13  
+
+c------------------------------------------------------------------
+c USER SET PARAMETERS
+
+c Spatial dimensions  of the fields (ni,nj,nk)
+c Number of kinds  of input files (nfiles)
+c    DON'T forget basic state "files" for TLM and ADJ
+c    these must be included in the total for nfiles
+c Number of other kinds  of "files" with which we can work (ndiffs)
+
+c DUST40
+      PARAMETER (ni=110, nj=80, nk=13, nfiles=1, ndiffs=0 ,ntimes=1
+c EXPL4,E4 PARAMETER (ni=61, nj=90, nk=20, nfiles=2, ndiffs=1 ,ntimes=1
+C W4 PARAMETER (ni=50, nj=80, nk=20, nfiles=2, ndiffs=1 ,ntimes=1
+C S2 PARAMETER (ni=43, nj=54, nk=20, nfiles=2, ndiffs=1 ,ntimes=1
+c S3 PARAMETER (ni=50, nj=70, nk=20, nfiles=2, ndiffs=1 ,ntimes=1
+C W3 PARAMETER (ni=46, nj=61, nk=20, nfiles=1, ndiffs=0 ,ntimes=1
+C      PARAMETER (ni=65, nj=65, nk=10, nfiles=1, ndiffs=0 ,ntimes=1
+C      PARAMETER (ni=20, nj=25, nk=5, nfiles=1, ndiffs=0 ,ntimes=3
+     &          ,fnul = 0.)
+c----------------------------------------------------------------------
+c OTHER PARAMETERS
+
+c The order of all the 3D fields is; u,v,T,q,z,div,vort,other
+c The order of all the 2D fields is; ps,Tg,Rnc,Rcv,slp
+      PARAMETER (n3Dflds=8 ,n2Dflds=5,nallknds=13)
+      PARAMETER (nkinds=nfiles+ndiffs ,nflds=n3Dflds+n2Dflds
+     &          ,nij=ni*nj ,nijk=nij*nk ,nchar=128 ,nfnt=nfiles*ntimes
+     &          ,null1=(nk-2)/2  ,null2=(nk-3)/2  ,null3=nk/2
+c kdr     &          ,null4=nk-1  ,null5=nflds*nk  ,null6=n3Dflds-2  
+     &          ,null4=nk-1  ,null5=nflds*nk  ,null6=n3Dflds-3  
+c kdr     &          ,null7=n2Dflds)
+     &          ,null7=n2Dflds-1)
+
+c---------------------------------------------------------------------
+c DIMENSIONS
+
+      CHARACTER*5 callknds(nallknds), ckinds, crdknd(6), cdfknd(6)
+     &           ,cvdknd(6),cccknd(6),  cgrknd(6), cgrkndD(6) 
+     &           ,czknd(6),cslknd(6),ctmknd ,cdescr(6)*20,cdescrD(6)*20
+     &           , cunit*2, cgrids*6, CFCODE*1
+     &           ,cdum*28, cdate*15,ccase*20, cbuff*4, cflds(nflds)*3
+      CHARACTER*1 cuclbl(nk),cvclbl(nk),cTclbl(nk)
+     &           ,cqclbl(nk) ,cpsclbl,cTgclbl, cotclbl(nk)
+     &           ,cRncclbl,cRcvclbl,czclbl(nk),cdvclbl(nk),cvtclbl(nk)
+     &           ,cslclbl,   clbl(nk,nflds)
+      CHARACTER*128 cMSnams(6,10), chead(5)   ,cJn(2)*2, cJ*2
+      LOGICAL filled,lchngJ, ldecup, ldomap,ldomapD,ldostt,lbighd
+     &       ,lTg,lq,lrf,lslp,lz 
+     &       ,lmoist,lground,lprflds,lother,ldiv,lvort
+     &       ,lflds(nflds), ldff,ltlmerr
+
+
+c time  and other arrays
+c    The files can have different time organizations.  (This requires
+c    user to know which times are in each input file, but allows
+c    comparison of different time structured files, and even 
+c    differently labeled times , in case the files start at dif-
+c    ferent times).
+c    Each of the (ntimes) times to be read in and kept will be 
+c    processed itreps(n) ways (possibly 0).
+c    If itreps(n) is 1 (the default value) then
+c    the program will supply a set of default values sufficient for
+c    taking a quick look at a data set.
+c    The user can change any of these default values for their run, 
+c    and specify changes from their own default values for each
+c    different processing repetition of each time.
+c
+c    ldostt           flag for whether to calculate any stats 
+c                     (T and F) default to T put out stats. 
+c    ldff,ltlmerr      switches for taking differences
+
+c character kind arrays
+c    callknds(13)*5   the character labels of the 13 kinds of data
+c    ckinds(nkinds)   the ch labels of the kinds with which we'll work 
+c                     during the run
+c    crdknd(6)        the ch labels of the kinds to be read in
+c    ctmknd           the ch label  of the kind  to be used as a time
+c                     reference
+c    cdfknd(6)        character array of the kinds whose 
+c                     difference we will calculate
+c    cccknd(6)        character array of 2 kinds whose correlation
+c                     or covariance we will calculate
+c    cgrknd(6)        the character names of the files to be graphed
+c    czknd(6)         the character names of the files to be used
+c                     in the calculation of geopotential heights
+c    cslknd(6)        the character names of the files to be used
+c                     in the calculation of sea level pressures 
+
+c----------------------------------------------------------------------
+
+      DIMENSION 
+c All the fields which may be read in ; u,v,T,q,ps,Tg,Rnc,Rcv  and
+c all the fields which can be calculated; 
+c                                  z,slp,div,vort,other(user supplied)
+c      Difference arrays  are included (no overwriting)
+     &   flds3D(nijk,n3Dflds,nkinds) ,flds2D(nij,n2Dflds,nkinds),
+     &   topog(ni,nj), fmapx(ni,nj),fmapd(ni,nj),  cf(ni,nj),
+c time, kind, statistics, and work,arrays
+     &   timsin(nfiles), itreps(ntimes), 
+     &   kinds(nkinds),ckinds(nkinds),   
+     &   corcov(nk+1,nflds), ikrd(6), ikgrf(6), ikdiff(6),ikhcc(6),
+     &   work(ni,nj,nk,2), stats(5,nk,nflds,nkinds),
+c potential vorticity arrays (can be commented out if no pot vort)
+     &   pkhb(ni,nj,nk),ux(ni,nj,nk),vx(ni,nj,nk),
+     &   iunit1(nfiles,2),
+c has dimension 2 to store the first unit number for each kind (Nrcount)
+c and the current unit number for each kind (comparison and Nacquire)
+     &   ifldsrw(3),ifldsr(3,nfiles),ifldsi(3,nfiles),
+c Graphics arrays
+     &   graph (nk,nflds) ,graphD(nk,nflds) ,NSDflds(nflds),
+     &   ugraph (nk) ,ugraphD(nk) ,
+     &   vgraph (nk) ,vgraphD(nk) ,
+     &   Tgraph (nk) ,TgraphD(nk) ,
+     &   qgraph (nk) ,qgraphD(nk) ,
+     &   zgraph (nk) ,zgraphD(nk) ,        zplvlsD(nk),
+     &   vtgraph (nk) ,vtgraphD(nk) ,
+     &   dvgraph (nk) ,dvgraphD(nk) ,
+     &   otgraph (nk) ,otgraphD(nk) ,
+     &   SHLOW(3),SHHIGH(3),USC(20),LUSC(20),    
+     &   ikgrfD(6),
+     &   SHLOWD(3),SHHIGHD(3),USCD(20),LUSCD(20),        
+c map arrays
+     &   xlat(ni,nj), xlon(ni,nj), framej(4,0:1),
+     &   dlat(ni,nj), dlon(ni,nj), sigf(nk+1), sigh(nk), dsig(nk),
+     &   slvls(nk)
+
+c-------------------------------------------------------
+c dimension arrays for reading and writing file information
+
+      parameter (imoist=1,nfieldh=4, nfieldq=3+imoist, 
+     &           nfieldr2=2+imoist*2, nfield3w=nfieldq, 
+     &           nfield2w=nfieldr2, 
+     &           nfieldsw=nfield3w+nfield2w+nfieldh)
+      parameter (nfieldsx=30, ndcharsw=6)
+      parameter (nnftimes=100 ,nrvars=32+2*nk ,nlvars=30, 
+     &           nnvars=50+nk+nnftimes+2*nfieldsw)
+      parameter (nfield3m=12 ,nbsized=400+nfield3m*nij 
+     &          ,nworkr=2+nij*nfield3m)
+      data ibsheadw/1/
+c
+      logical  lvarsi(nlvars,nfiles)
+      real  rvarsi(nrvars,nfiles)
+      integer nvarsi(nnvars,nfiles),ir1(nfiles)
+      character*(8) cfldsi(nfieldsx,nfiles) ,cfldsrw(nfieldsx)
+     &             ,cfldsr(nfieldsx,nfiles)
+      character*(nchar)  charsi(ndcharsw,nfiles)
+c gulf
+      real topogf(ni,nj), topoga(ni,nj)
+c---------------------------------------------------------------------
+
+
+      EQUIVALENCE (ikgrf,ikdiff),(ikgrf,ikhcc),(work,stats)
+     &           ,(clbl(1,1),cuclbl)   ,(clbl(1,2),cvclbl)
+     &           ,(clbl(1,3),cTclbl)   ,(clbl(1,4),cqclbl)
+     &           ,(clbl(1,5),czclbl)   ,(clbl(1,6),cdvclbl)
+     &           ,(clbl(1,7),cvtclbl)  ,(clbl(1,8),cotclbl)  
+     &           ,(clbl(1,9),cpsclbl)
+     &           ,(clbl(1,10),cTgclbl)  ,(clbl(1,11),cRncclbl)
+     &           ,(clbl(1,12),cRcvclbl) ,(clbl(1,13),cslclbl)
+      EQUIVALENCE (lflds(4),lq)    ,(lflds(5),lz)    ,(lflds(6),ldiv)
+     &           ,(lflds(7),lvort) ,(lflds(8),lother),(lflds(10),lTg) 
+     &           ,(lflds(11),lrf ) ,(lflds(13),lslp)
+     &           ,(ugraph ,graph(1,1)) ,(ugraphD,graphD(1,1))
+     &           ,(vgraph ,graph(1,2)) ,(vgraphD,graphD(1,2))
+     &           ,(Tgraph ,graph(1,3)) ,(TgraphD,graphD(1,3))
+     &           ,(qgraph ,graph(1,4)) ,(qgraphD,graphD(1,4))
+     &           ,(zgraph ,graph(1,5)) ,(zgraphD,graphD(1,5))
+     &           ,(dvgraph ,graph(1,6)) ,(dvgraphD,graphD(1,6))
+     &           ,(vtgraph ,graph(1,7)) ,(vtgraphD,graphD(1,7))
+     &           ,(otgraph ,graph(1,8)) ,(otgraphD,graphD(1,8))
+     &           ,(psgraph ,graph(1,9)) ,(psgraphD,graphD(1,9))
+     &           ,(Tggraph ,graph(1,10)) ,(TggraphD,graphD(1,10))
+     &           ,(Rncgraph ,graph(1,11)) ,(RncgraphD,graphD(1,11))
+     &           ,(Rcvgraph ,graph(1,12)) ,(RcvgraphD,graphD(1,12))
+     &           ,(slpgraph ,graph(1,13)) ,(slpgraphD,graphD(1,13))
+
+c---------------------------------------------------------------------
+c---------------------------------------------------------------------
+c DATA ASSIGNMENTS;
+c---------------------------------------------------------------------
+c By Data statement
+
+c Default default (DD) values, which will be used if user does not set
+c defaults for their particular run (in INITDATA, using same default
+c  variable names).
+
+c DD (sub)domain to be graphed; whole domain
+c DD level and contour arrays;  top, middle, and bottom  levels, 
+c                                contours chosen by conrec
+
+      DATA 
+     &   ccswtch ,thresh,spval,renorm /0.,-1.E10,1.E29,1.0/, 
+     &   ldomapD,ldomap,ldecup,ldostt,lbighd,lchngJ/5*.TRUE.,.FALSE./,
+     &   i1grfD,j1grfD,nigrfD,njgrfD /2*1,ni,nj/,
+     &   i1grf ,j1grf ,nigrf ,njgrf  /2*1,ni,nj/,
+     &   itreps /ntimes*1/, 
+     &   ikgrfD /6*0/,
+     &   ckinds / nkinds*'noknd'/,  cgrkndD /6*'noknd'/, 
+     &   cdescr/6*' '/,cdescrD/6*'no descr'/,
+     &   ID /2/,ICOUNT /1/, cJn /'  ','  '/,LWcontD,LWmapD /2*1000/,
+     &   FLOWD, FHGHD,SMTHD /3*0./,
+     &   NDSHD /-341/,    ! 0101010101010101  dash pattern
+c                        NDSHD=-877  ! 1011011101101101
+     &   NHGHD, NSETD, NCMD, LLPD, LZEROD, NMMD /-2,4*1,2/,
+     &   SFSD /-2.0/,
+     &   SHLOWD, SHHIGHD, SHL1D, SLL1D  /1.,7*-1./,
+     &   NUSCD, USCD, LUSCD/0,20*0.,20*3/,
+     &   callknds /'NLMop','NLMin','NLMoc',
+     &             'TLMo1','TLMb1','TLMo2','TLMb2',
+     &             'ADJo1','ADJb1','ADJo2','ADJb2','TLMer','fdiff' /,
+     &   crdknd /6*' '/, cdfknd /6*' '/, cccknd /6*' '/,ctmknd /' '/,
+     &   czknd /6*' '/, cslknd /6*' '/,cvdknd /6*' '/,
+     &   cMSnams /60*' '/,
+     &   cgrids /'NOPLOT'/
+     &   ccase /'no case specified  '/
+      DATA
+     &   graphD/ -9.,null1*fnul,-9.,null2*fnul,-9.    !u
+     &          ,-9.,null1*fnul,-9.,null2*fnul,-9.    !v
+     &          ,-9.,null1*fnul,-9.,null2*fnul,-9.    !T
+     &          ,nk*fnul                              !q
+     &          ,nk*fnul           ,nk*fnul           !z    div   
+     &          ,nk*fnul           ,nk*fnul           !vort other     
+     &          ,-9.,null4*fnul    ,nk*fnul           !ps   Tg
+     &          ,nk*fnul   ,nk*fnul                   !Rnc   Rcv 
+     &          ,nk*fnul                         /,   !slp
+     &   zplvlsD /500.,null4*fnul/,
+     &   clbl/null5*' '/,
+c kdr     &   lflds/2*.TRUE.,null6*.FALSE.  ,null7*.FALSE./,
+     &   lflds/3*.TRUE.,null6*.FALSE.  ,.TRUE.,null7*.FALSE./,
+     &   NSDvel,NSDmst,NSDrnf,NSDtmp,NSDprs,NSDzht,NSDoth
+     &         /3*-2,-3,-4,2*-3/,
+     &   cflds/'u  ','v  ','T  ','q  ','z  ','div','vrt','oth'
+     &        ,'ps ','Tgr','Rnc','Rcv','slp'/,
+     &   cfldsrw/'      pu','      pv','      pt','      pq'
+     &          ,'       z','     div','    vort','   other'
+     &          ,'     pub','     pvb','     ptb','     pqb'
+     &          ,'      ps','      tg',' rainncv','  raincv','     slp'
+     &          ,'     psb','     tgb'
+     &          ,'   topog'
+     &          ,10*'        '/,
+     &   ifldsrw/12,7,1/
+      
+      PRINT*,'nullX',null1,null2,null3,null4,null5,null6,null7
+
+      timsin = spval
+      cfldsr(1 ,1:nfiles) = '      pu'
+      cfldsr(2 ,1:nfiles) = '      pv'
+      cfldsr(3 ,1:nfiles) = '      pt'
+      cfldsr(4 ,1:nfiles) = '      pq'
+      cfldsr(5 ,1:nfiles) = '     pub'
+      cfldsr(6 ,1:nfiles) = '     pvb'
+      cfldsr(7 ,1:nfiles) = '     ptb'
+      cfldsr(8 ,1:nfiles) = '     pqb'
+      cfldsr(9 ,1:nfiles) = '      ps'
+      cfldsr(10,1:nfiles) = '      tg'
+      cfldsr(11,1:nfiles) = ' rainncv'
+      cfldsr(12,1:nfiles) = '  raincv'
+      cfldsr(13,1:nfiles) = '     psb'
+      cfldsr(14,1:nfiles) = '     tgb'
+      cfldsr(15,1:nfiles) = '   topog'
+      cfldsr(16:30,1:nfiles) = '        '
+      ifldsr(1,1:nfiles) = 8
+      ifldsr(2,1:nfiles) = 6
+      ifldsr(3,1:nfiles) = 1
+
+c---------------------------------------------------------------------
+c By Namelist input;
+
+c Default values, whether set above or set by the user through namelist 
+c group INITDATA, 
+c will be reinstated after  every call to subroutine Kdeflt, 
+c which cancels the changes to the processing parameters introduced
+c by the user through the GRFDATA namelist )
+c Then the following  GRFDATA namelist can be used to make new changes
+
+      NAMELIST 
+     &   /INITDATA/ ID,IOUT, itreps, cJn,renorm,
+     &      ldff,ltlmerr,  ccswtch, thresh, 
+     &      i1grfD,j1grfD,nigrfD,njgrfD,
+     &      lchngJ,ldecup,ldomapD,ldomap,ldostt,lprflds,lbighd,
+     &      lTg,lq,lrf,lz,lslp,lother,ldiv,lvort,
+     &      cgrids,cMSnams,  ccase, cdescrD, ctmknd, 
+     &      ckinds, crdknd, cdfknd, cccknd, cgrkndD, czknd, cslknd,
+     &      cvdknd,
+     &      ugraphD,vgraphD,TgraphD,qgraphD,zgraphD,zplvlsD,
+     &      dvgraphD,vtgraphD,otgraphD,
+     &      psgraphD,TggraphD,RncgraphD,RcvgraphD,slpgraphD,
+     &      NSDvel ,NSDtmp ,NSDprs ,NSDmst ,NSDrnf ,NSDzht,NSDoth,
+     &      FLOWD, FHGHD,  NSETD, NHGHD, NDSHD, SMTHD, NMMD, LLPD,
+     &      SFSD, NCMD, SHLOWD, SHHIGHD, NUSCD, USCD, LUSCD, 
+     &      LZEROD, SHL1D, SLL1D,   LWcontD,LWmapD, ICOUNT,
+     &   /STATSUB/ i1stat,j1stat,nistat,njstat,
+     &   /TIMES/ timsin,
+     &   /GRFDATA/ cgrknd,cdescr,  ugraph,vgraph,Tgraph,
+     &      qgraph,zgraph,dvgraph,vtgraph,otgraph,
+     &      psgraph,Tggraph,Rncgraph,Rcvgraph, slpgraph,
+     &      cuclbl,cvclbl,cTclbl,cpsclbl,cotclbl,cvtclbl,cdvclbl,
+     &      cTgclbl,cqclbl,cRncclbl,cRcvclbl,czclbl,cslclbl,
+     &      ldomap, LWcont,LWmap, thresh,
+     &      i1grf, j1grf, nigrf, njgrf,
+     &      FLOW, FHGH, NSET, NHGH, NDSH, SMTH, NMM, LLP,
+     &      SFS, NCM, SHLOW, SHHIGH, NUSC, USC, LUSC, LZERO, SHL1,SLL1
+
+      READ (11,INITDATA)
+
+      lflds(n3Dflds+4) = lflds(n3Dflds+3)
+      IF (ctmknd.EQ.' ') ctmknd = crdknd(1)
+
+c Set the number of significant digits to be plotted for various fields
+      NSDflds(1) = NSDvel          !u
+      NSDflds(2) = NSDvel          !v
+      NSDflds(3) = NSDtmp          !T
+      NSDflds(4) = NSDmst          !q
+      NSDflds(5) = NSDzht          !z
+      NSDflds(6) = NSDvel          !div
+      NSDflds(7) = NSDvel          !vort
+      NSDflds(8) = NSDoth          !other
+      NSDflds(9) = NSDprs          !ps
+      NSDflds(10) = NSDtmp          !Tg
+      NSDflds(11) = NSDrnf          !rainfall
+      NSDflds(12) = NSDrnf          !convective rain
+      NSDflds(13) = NSDprs          !sea level pressure
+
+c The default values of the statistics subdomain are set to the
+c graphing subdomain 
+      i1stat = i1grfD
+      j1stat = j1grfD
+      nistat = nigrfD
+      njstat = njgrfD 
+c The statistics subdomain can be changed from the graphing subdomain
+c to something smaller through the namelist STATSUB
+      READ (11,STATSUB)
+
+      IF (lbighd) THEN
+         READ(10,'(A28)')cdum
+         cdate = cdum(5:19)
+         PRINT*,'cdum and cdate ', cdum,'      ', cdate
+         READ(10,'(A)') cdum
+         chead(1) = cdate//'     sun output = '//cdum
+      END IF
+
+      LWcont = LWcontD
+      LWmap  = LWmapD
+
+c--------------------------------------------------------------------
+c--------------------------------------------------------------------
+c Check for internal consistency of parameters provided by user
+
+      PRINT*,' '
+      kindtot = 0
+      DO 59 kind=1,6
+         IF (crdknd(kind).NE.' ') kindtot = kindtot+1
+         IF ((crdknd(kind).EQ.'TLMo1' .OR. crdknd(kind).EQ.'ADJo1')
+     &       .AND. crdknd(kind+1)(4:4).NE.'b') THEN
+            PRINT*,'Error in crdknd; kind XXXb# must be read in with ',
+     &             'kinds TLMo1 and ADJo1'
+         END IF
+ 59   END DO
+      IF (cdfknd(1)(1:1).NE.' ') THEN
+         kindtot = kindtot+1
+         IF (ltlmerr) kindtot = kindtot+1
+      END IF
+      IF (kindtot.NE.nkinds) WRITE(*,88)'nfiles and/or ndiffs are ',
+     &   'inconsistent with crdknd and cdfknd'
+
+      IF (.NOT.ldff) THEN
+         IF (cdfknd(1)(1:1).NE.' ')  THEN
+            WRITE(*,89)'ldff = F  but cdfknd is filled'
+         END IF
+         IF (ltlmerr) WRITE(*,89)'ldff = F  and ltlmerr = T'
+      END IF
+      IF (cdfknd(1).EQ.cdfknd(2).AND.cdfknd(1).NE.' ') THEN
+         PRINT*,'kinds to be differenced are the same file'
+      END IF
+
+      IF (cccknd(1).EQ.cccknd(2).AND.cccknd(1).NE.' ') THEN
+         PRINT*,'kinds to be correlated are the same file'
+      END IF
+
+      nzplvls = 0
+      DO 29 k=1,nk
+         IF (zplvlsD(k).NE.fnul) nzplvls = nzplvls + 1
+ 29   END DO
+      IF (lz) THEN
+         IF (nzplvls.EQ.0) WRITE(*,88) 'no pressure levels have ',
+     &   'been specified in zlvls in namelist INITDATA'
+         IF (.NOT.ldecup) WRITE(*,88) 'The fields must be decoupled '
+     &               ,'in order to calculate the geopotential'
+      END IF
+
+c The order of all the 3D fields is; u,v,T,q,z,div,vort,other
+c The order of all the 2D fields is; ps,Tg,Rnc,Rcv,slp
+      DO n=5,8
+         IF (filled(graphD(1,n),nk,fnul).AND..NOT.lflds(n))  THEN
+            WRITE(*,88) 'You are trying to plot ',cflds(n)
+     &                 ,' without calculating it; logical var is F'
+         END IF
+      END DO
+      IF (filled(graphD(1,nflds),nk,fnul).AND..NOT.lflds(nflds))  THEN
+         WRITE(*,88) 'You are trying to plot ',cflds(nflds)
+     &              ,' without calculating it; logical var is F'
+      END IF
+
+ 88   FORMAT ('ERROR in INITDATA namelist;  '/ '  ',6A)
+ 89   FORMAT ('ERROR in INITDATA namelist;  '/ '  ',A,I1,A,I1,A)
+      PRINT*,' '
+c--------------------------------------------------------------------
+c Determine which kinds will be processed by this run
+c     The structure of this loop requires that the user input the
+c     ckinds in the same order in which they appear in the callknds
+c     array
+
+      DO 38 kind=1,nkinds
+         PRINT*,'ckinds = ',ckinds(kind)
+ 38   END DO
+      iwant = 1
+      DO 39 kind=1,nallknds
+         IF (callknds(kind).eq.ckinds(iwant)) THEN
+            kinds(iwant) = kind
+            iwant = iwant +1
+         END IF
+ 39   END DO
+      PRINT*,'This program will use ',nkinds,' kinds of data (not',
+     &       ' variables)'
+      PRINT*,'Those kinds have integer labels; '
+      PRINT*,'ckind     kind'
+      DO i=1,nkinds
+         PRINT*,ckinds(i),'     ',  kinds(i)
+      END DO
+      PRINT*,' '
+c---------------------------------------------------------------------
+ 
+c READ MAIN HEADERS  
+c      CALL Kknums(callknds,crdknd,6,kinds,nfiles,nallknds,ikrd,nktord)
+
+      DO 99 nfile=1,ABS(nfiles)
+c        acquire the mass store file
+         IF (crdknd(nfile)(4:4).NE.'b') THEN
+            iunit1(nfile,1:2) = (nfile+1)*10
+            CALL Kreadhd (crdknd(nfile),cfldsi(1,nfile)
+     &                   ,cMSnams(nfile,1),iunit1(nfile,1),ir1(nfile)
+     &                   ,lprflds,cfldsrw,cfldsr(1,nfile),ifldsrw
+     &                   ,ifldsr(1,nfile),ni,nj,nk,nij,dx,ptop,clat,clon
+     &                   ,nlvars,nrvars,nnvars,nfieldsx,nbsized,nworkr
+     &                   ,sigf,sigh,nvarsi(1,nfile),rvarsi(1,nfile)
+     &                   ,work,work(1,1,nk-4,2),lvarsi(1,nfile))
+            IF (nfile.EQ.1) THEN
+               topog(1:ni-1,1:nj-1) = work(1:ni-1,1:nj-1,nk-4,2)
+            END IF
+            ifldsi(1:3,nfile) = nvarsi(17:19,nfile) 
+            CALL Krdfill(cfldsr(1,nfile),cfldsrw,cfldsi(1,nfile)
+     &                  ,ifldsr(1,nfile),ifldsrw,ifldsi(1,nfile))
+         END IF
+           
+ 99   END DO
+      PRINT*,'dx = ',dx
+c---------------------------------------------------------------------
+ 
+c open the graphics package (Ron's subroutine FGOPEN)
+      ICLIP = 0
+      CFCODE = ':'
+      IUNIT = 2
+      CALL FGOPEN(ICLIP,CFCODE,IUNIT)
+
+      CALL Nmapfacs (xlat,xlon,fmapx,cf,ni,nj,clon,clat,dx,0)
+      CALL Nmapfacs (dlat,dlon,fmapd,cf,ni,nj,clon,clat,dx,1)
+      IF (cgrids.EQ.'  PLOT') THEN
+         PRINT*,'calling Kplot0'
+         CALL Kplot0 (dlon,dlat,clon,clat,dx,ni,nj,ni,nj,' DOT ')
+         CALL Kplot0 (xlon,xlat,clon,clat,dx,ni,nj,ni-1,nj-1,'CROSS')
+c uncomment the next line for plotting the cross and dot grid points
+         CALL FRAME
+      ENDIF
+
+      CALL SETUSV('LW',LWmap)
+      CALL GOPWK(2,14,3)
+
+c GFLAS for big header
+      CALL GFLAS1(2)
+      IF (lbighd) THEN
+         CALL Kplchxx (0.,.98,chead(1),nchar,.012,0.,-1.,3,1)
+         CALL Kplchxx (0.,.96,cMSnams(1,1),nchar,.012,0.,-1.,3,1)
+         CALL Kplchxx (0.,.94,cMSnams(2,1),nchar,.012,0.,-1.,3,1)
+         CALL Kplchxx (0.,.92,cMSnams(3,1),nchar,.012,0.,-1.,3,1)
+         CALL Kplchxx (1.,.92,ccase       ,20,.012,0., 1.,3,1)
+      END IF
+      CALL GFLAS2
+
+c GFLAS for cross grid
+C      IF (nigrfD.EQ.ni .AND. njgrfD.EQ.nj) THEN
+         PRINT*,' '
+         PRINT*,'Setting up GFLAS map backgrounds'
+         CALL GFLAS1(1)
+         CALL GSCLIP(ICLIP)
+         CALL PCSETC ('FC',CFCODE)
+c There is a SET call in KMSUPMP(MSUPMP) which makes a frame only
+c approximately the size fed to it.  This approximate size is returned
+c in framej, and passed to Kplotint for further (consistent) use
+
+         framej(1,1) = -1.
+         CALL KMSUPMP (xlon,xlat,clon,dx,ni,nj,1,ID,IOUT,framej(1,1))
+         CALL SETUSV('LW',LWmap)
+c reset line width (changed in SETUSV)      CALL SETUSV('LW',LWcont)
+         CALL GFLAS2
+
+c GFLAS for dot grid
+         CALL GFLAS1(0)
+         CALL GSCLIP(ICLIP)
+         CALL PCSETC ('FC',CFCODE)
+         framej(1,0) = -1.
+         CALL KMSUPMP (dlon,dlat,clon,dx,ni,nj,0,ID ,IOUT,framej(1,0))
+c reset line width (changed in SETUSV)
+         CALL SETUSV('LW',LWcont)
+         CALL GFLAS2
+C      ELSE
+C         PRINT*,'NOT setting GFLAS map backgrounds (no SET calls)'
+C         CALL GSCLIP(ICLIP)
+C         CALL SETUSV('LW',LWcont)
+C      ENDIF
+
+
+      OPEN (UNIT=12,FORM='FORMATTED')
+      OPEN (UNIT=13,FORM='UNFORMATTED')
+
+c---------------------------------------------------------------------
+c---------------------------------------------------------------------
+c     TIMES LOOP (over ntimes; the number of times to be processed)
+      DO 999 ntime=1,ntimes
+c---------------------------
+
+c     Read in timsin from its namelist.  It has nfiles times on it
+c     for the nfiles files to be read in.
+      READ (11,TIMES)
+
+      DO 105 nf=1,nfiles
+         IF (timsin(nf).EQ.spval ) 
+     &      WRITE(*,89) 'not enough times or kinds in timsin'
+         IF (crdknd(nf)(1:4).EQ.'ADJo') THEN
+            IF (timsin(nf).GT.0.) 
+     &         WRITE(*,89) 'adjoint times must be <=0'
+         ELSE IF (crdknd(nf)(4:4).NE.'b'.AND.
+     &            crdknd(nf)(4:5).NE.'in') THEN
+            IF (timsin(nf).LT.0.) 
+     &         WRITE(*,89) 
+     &         'forward times (non-initialized) must be >=0, nf = '
+     &                    ,nf,crdknd(nf)
+         END IF
+ 105  END DO
+
+c     Read in the next desired time from each kind of input file
+      
+      PRINT*,' '
+      PRINT*,'time = ',timsin(1)
+
+c initialize fields to 0.
+      IF (ntime.EQ.1) THEN
+         flds3D = 0.
+         flds2D = 0.
+      ENDIF
+
+      CALL Kreadt(flds3D,flds2D,nvarsi,rvarsi,work
+     &           ,timsin,ir1,ikrd,kinds,iunit1,ifldsrw,ifldsr
+     &           ,renorm,lvarsi,ldecup,lprflds
+     &           ,crdknd,callknds,cMSnams, cfldsrw,cfldsi,cfldsr
+     &           ,ni,nj,nk,nij,nijk,nfiles,nkinds,nallknds,n3Dflds
+     &           ,n2Dflds,nlvars,nrvars,nnvars,nfieldsx,nbsized,nworkr)
+
+c kdr NRL write out data sets (profiles) for flux eigenanalysis
+C      IF (ntime.eq.1) OPEN(17,FILE='profs',FORM='UNFORMATTED')
+C      np=0
+C      PRINT*,'nspong = ',nspong
+C      DO j=nspong+2,nj-nspong,3
+C      DO i=nspong+2,ni-nspong
+C         IF (np.LE.500) THEN
+C            np=np+1
+C            ij=(j-1)*ni+i
+C            PRINT*,'i,j,ij = ',i,j,ij
+C            WRITE(*,*) ',flds2D(ij,ifld,1) = '
+C     &                 ,(flds2D(ij,ifld,1),ifld=1,2)
+C            WRITE(17) i,j,(flds2D(ij,ifld,1),ifld=1,2)
+C            DO ifld=1,4
+C               WRITE(17) i,j,(flds3D(ij+nij*(k-1),ifld,1),k=1,nk)
+C            ENDDO
+C         ENDIF
+C      ENDDO
+C      ENDDO
+C      PRINT*,np,' points written to profs'
+C    5 FORMAT (2i3,1p,(10e15.6))
+C      STOP 'NRL'
+c kdr end
+
+c knums in readt finds the values of the kinds to be read
+
+c fill in missing fields with 0s
+      DO 110 nf=1,nfiles
+         IF (crdknd(nf)(1:4).EQ.'NLMi' .OR. 
+     &       crdknd(nf)(4:4).EQ.'b'  )THEN
+c     &       crdknd(nf)(1:3).EQ.'ADJ'  .OR.
+C     &      .OR. (timsin(nf).EQ.0. .AND. crdknd(nf)(4:4).EQ.'o') ) THEN
+            
+            PRINT*,'nonconv. and conv. rainfall have been set to 0. ',
+     &             'for ',crdknd(nf) 
+            flds2D(:,3,nf) = 0.
+            flds2D(:,4,nf) = 0.
+         END IF
+    
+c set Tg edge values = values just inside edge
+         flds2D(2:ni-2,2,nf) = flds2D(ni+2:2*ni-2,2,nf)
+         flds2D((nj-2)*ni+2:(nj-1)*ni-2,2,nf) = 
+     &   flds2D((nj-3)*ni+2:(nj-2)*ni-2,2,nf)
+         flds2D(1:(nj-2)*ni+1:ni,2,nf) =
+     &   flds2D(2:(nj-2)*ni+2:ni,2,nf) 
+         flds2D(ni-1:(nj-1)*ni-1:ni,2,nf) =
+     &   flds2D(ni-2:(nj-1)*ni-2:ni,2,nf) 
+ 110  END DO
+c vbug
+C      PRINT*,'after reading in v6hr and v24hr = '
+C      DO j=1,nj,3
+C         ijk=ni*(j-1) + ni-10
+C         WRITE(*,'(2I3,A,1p2E20.13)') ni-10,j,'k=7-11'
+C     &       ,(flds2D(ijk,4,n),n=1,2)
+C         WRITE(*,'(1p5E20.13)') (flds3D(nij*(k-1)+ijk,2,1),k=7,11)
+C         WRITE(*,'(1p5E20.13)') (flds3D(nij*(k-1)+ijk,2,2),k=7,11)
+C      ENDDO
+
+
+c------------------------------------------------
+c Calculate the geopotential heights and/or sea level pressures
+
+      IF (lz .OR. lslp) THEN
+         CALL Kconsfl (sigf,sigh,dsig, ni,nj,nk,nk+1 
+     &               ,ni1,nj1,R,g,gr,tlapse, dx, dx2)
+         IF (lslp) THEN
+            CALL Kknums(callknds,cslknd,6,kinds,nkinds,nallknds
+     &                 ,ikgrf,nktogrf)
+            PRINT*,'Sea-level pressure; cslknd, ikgrf  '
+     &             ,cslknd,(ikgrf(n),n=1,nktogrf)
+            DO 179 n=1,nktogrf
+               flds3D(1:nijk,5,ikgrf(n)) = 0.
+               CALL Kgeopsig (flds3D(1,3,ikgrf(n))
+     &                       ,flds3D(1,5,ikgrf(n)) 
+     &                       ,topog ,ni,nj,nk,flds2D(1,1,ikgrf(n)) 
+     &                       ,sigh,dsig ,ptop,R,g)
+               CALL Kslpres(flds3D(1,5,ikgrf(n))
+     &                    ,flds3D(1,3,ikgrf(n))
+     &                    ,flds2D(1,1,ikgrf(n)) ,topog 
+     &                    ,flds2D(1,5,ikgrf(n))
+     &                    ,sigf, ni,nj,nk ,tlapse,g,R,ptop)
+ 179        END DO
+         END IF
+
+c the geop array will be filled with heights on constant pressure 
+c surfaces here; the heights on sigma surfaces will be lost
+
+         IF (lz) THEN
+            CALL Kknums(callknds,czknd,6,kinds,nkinds,nallknds
+     &                 ,ikgrf,nktogrf)
+         PRINT*,'czknd, ikgrf '
+         DO nz=1, nktogrf 
+            PRINT*,czknd(nz),ikgrf(nz)
+         END DO
+         PRINT*,'  '
+            DO 199 n=1,nktogrf
+               IF (.NOT.lslp) THEN
+                  CALL Kgeopsig (flds3D(1,3,ikgrf(n))
+     &                          ,flds3D(1,5,ikgrf(n)) 
+     &                          ,topog, ni,nj,nk
+     &                          ,flds2D(1,1,ikgrf(n))
+     &                          ,sigh,dsig, ptop,R,g)
+               END IF
+               zplvlsD = zplvlsD*.1
+            PRINT*,'n, ikgrf(n) = ',n, ikgrf(n)
+               CALL Kgeopp(flds3D(1,5,ikgrf(n)) 
+     &                    ,flds3D(1,3,ikgrf(n))
+     &                    ,flds2D(1,1,ikgrf(n)), topog,sigh, ni,nj,nk
+     &                    ,zplvlsD, nzplvls, R,g,tlapse,ptop)
+               zplvlsD = zplvlsD*10.
+ 199        END DO
+         END IF
+      END IF
+
+c------------------------------------------------
+c calculate the divergence and/or vorticity
+
+      IF (ldiv.OR.lvort) THEN
+         CALL Kknums(callknds,cvdknd,6,kinds,nkinds,nallknds
+     &              ,ikgrf,nktogrf)
+         DO n=1,nktogrf
+            PRINT*,'calling Kdivort for n = ',n
+            CALL Kdivort
+     &           (flds3D(1,6,ikgrf(n)),flds3D(1,7,ikgrf(n))
+     &           ,flds3D(1,1,ikgrf(n)),flds3D(1,2,ikgrf(n))
+     &           ,fmapx,work,dx,ni,nj,nk,ldiv,lvort)
+         END DO
+      END IF
+c-----------------------------------------------
+c calculate an "other" field
+c
+c sensitivity to divergence and vorticity
+C      IF (lother) THEN
+C         cflds(1)= 'div'
+C         cflds(2)= 'vor'
+C         ijk=0
+C         DO k=1,nk
+C         DO j=1,nj
+C         DO i=1,ni
+CC            ijk = (k-1)*nij + (j-1)*ni + i
+C            ijk = ijk+1
+C            flds3D(ijk,1,1)=flds3D(ijk,1,1)/fmapd(i,j)
+C            flds3D(ijk,2,1)=flds3D(ijk,2,1)/fmapd(i,j)
+C         END DO
+C         END DO
+C         END DO
+Cc calc stream function and  velocity potential
+Cc store temporarily in "user defined" field (8), and work(:,:,:,2)
+C         CALL Achanguv (flds3D(1,1,1),flds3D(1,2,1),flds3D(1,8,1)
+C     &                 ,work,dx,ni,nj,nk)
+C         iters=2
+C         DO j=1,nj
+C         DO i=1,ni
+C            work(i,j,1,2) = fmapx(i,j)*fmapx(i,j)
+C         END DO
+C         END DO
+C         work(1:10,1,2,2) = 1.
+Cc calc div from velocity potential
+CC         CALL Nrsetc(flds3D(1,1,1),nijk,0.)
+C         CALL Ahelmz (work,flds3D(1,1,1),work,work(1,1,1,2)
+C     &               ,work(1,1,2,2),0.,dx,ni,nj,nk,iters)
+Cc calc vort from stream function
+CC         CALL Nrsetc(flds3D(1,2,1),nijk,0.)
+C         CALL Ahelmz (flds3D(1,8,1),flds3D(1,2,1),work,work(1,1,1,2)
+C     &               ,work(1,1,2,2),0.,dx,ni,nj,nk,iters)
+C      END IF
+C      IF (lother) THEN
+C         DO 186 j=1,nj
+C         DO 186 i=1,ni
+C            ij = (j-1)*ni + i
+C            flds3D(ij,8,1) = flds2D(ij,3,1)+flds2D(ij,4,1)
+C            flds3D(ij,8,2) = flds2D(ij,3,2)+flds2D(ij,4,2)
+C 186     END DO
+C         cflds(8)= 'R  '
+C      ENDIF
+c      IF (lother) THEN
+c      read (14) ictopoga,nstep,nix,njx,dx,clat,clon,topogf,topoga
+c      read (14) ictopoga,nstep,nix,njx,dxx,clatx,clonx,topogf,topoga
+c         flds3D(1:nijk,8,1:2) = 0.
+c         DO 186 j=1,nj
+c         DO 186 i=1,ni
+c            ij = (j-1)*ni + i
+c            flds3D(ij,8,1) = topoga(i,j)
+c 186     END DO
+c         cflds(8)= 'zo '
+c      END IF
+
+c The order of all the 3D fields is; u,v,T,q,z,div,vort,other
+C     &   flds3D(nijk,n3Dflds,nkinds) ,flds2D(nij,n2Dflds,nkinds),
+c Brownsville = (22,43)
+C      ip1=42*ni+22
+C      iel=ip1
+C      PRINT*,'k    T      q'
+C      DO n=1,nk
+C         WRITE(*,'(I3,F7.1,2X,F7.5)') n,flds3D(iel,3,1),flds3D(iel,4,1)
+C         iel=iel+nij
+C      END DO
+
+C      IF (lother) THEN
+C      DO 189 n=1,nfiles
+C      IF (crdknd(n)(1:3).EQ.'NLM' .OR. crdknd(n)(4:4).EQ.'b') THEN
+Cc northward moisture flux
+C         cflds(8)= 'vxq'
+C         CALL Bd2x (work,flds3D(1,2,n),ni,nj,nk)
+C         DO 186 k=1,nk
+C         DO 186 j=1,nj-1
+C         DO 186 i=1,ni-1
+C            m = (k-1)*nij + (j-1)*ni + i
+C            flds3D(m,8,n) = work(i,j,k,1)*flds3D(m,4,n)
+C 186     END DO
+C      ELSE IF(crdknd(n)(1:3).EQ.'TLM')  THEN
+C         cflds(8)= 'vxq'
+C         DO k=1,nk
+C         DO j=1,nj-1
+C         DO i=1,ni-1
+C            m = (k-1)*nij + (j-1)*ni + i
+C            flds3D(m,8,n)=flds3D(m,2,n)*flds3D(m,4,n+1)
+C     &                   +flds3D(m,4,n)*flds3D(m,2,n+1)
+C         END DO
+C         END DO
+C         END DO
+C      END IF
+C 189  END DO
+C      END IF
+
+C      IF (lother) THEN
+C      DO 189 n=1,nfiles
+C      IF (crdknd(n)(1:3).EQ.'NLM' .OR. crdknd(n)(4:4).EQ.'b') THEN
+Cc northwestward moisture flux ; (v-u)*q/SQRT(2.)
+C         cflds(8)= 'nwq'
+C         orient=1./SQRT(2.)
+C         CALL Bd2x (work(1,1,1,1),flds3D(1,1,1),ni,nj,nk)
+C         CALL Bd2x (work(1,1,1,2),flds3D(1,2,1),ni,nj,nk)
+C         DO 186 k=1,nk
+C         DO 186 j=1,nj-1
+C         DO 186 i=1,ni-1
+C            m = (k-1)*nij + (j-1)*ni + i
+C            flds3D(m,8,n) = (work(i,j,k,2)-work(i,j,k,1))*flds3D(m,4,n)
+C     &                      *orient
+C 186     END DO
+C      END IF
+C 189  END DO
+C      END IF
+
+c         cflds(8)= 'bl '
+c         DO 186 j=1,nj-1
+c         DO 186 i=1,ni-1
+c            m = (j-1)*ni + i
+c            flds3D(m,8,n) = spval
+cc            flds3D(m,8,n) = fmapx(i,j)
+c 186     END DO
+c         flds3D(nij+1:nijk,8,n) = 0.
+c
+cc potential vorticity
+c         IF (n.EQ.1) THEN
+c            cflds(8)= 'PV '
+c            npkappa = 1400
+cc from Nconst
+c            xkap = 287.04/1005.7
+cc                        pkappa(npkappa),dummy
+c            CALL Ntables(work,work(1,1,1,2),npkappa,5,xkap,ptop)
+c         END IF
+cc not all n? only basic states.
+c         flds3D(:,8,n) = spval
+c         g=9.8
+c         CALL Kpotvort(flds3D(1,1,n),flds2D(1,1,n),pkhb,sigf,sigh
+c     &                ,work(1,1,1,2),work(1,2,1,2),ux,vx,cf
+c     &                ,work(1,3,1,2),work(1,4,1,2),dx,xkap,ptop,g
+c     &                ,ni,nj,nk,n3Dflds,n2dflds)
+cc mine         CALL Kpotvort(flds3D(1,1,n),flds2D(1,1,n),pkhb,sigf,sigh
+cc     &                ,work(1,1,1,2),ux,vx,cf,dx,xkap,ptop
+cc     &                ,ni,nj,nk,n3Dflds,n2dflds,nkinds)
+c      END IF
+c
+c calculate speed
+c         IF (ckinds(n)(1:3).NE.'ADJ') THEN
+c            cflds(8)= 'spd'
+c            DO 188 ijk=1,nijk
+c               flds3D(ijk,8,n) = 
+c     &            SQRT(flds3D(ijk,1,n)*flds3D(ijk,1,n) + 
+c     &              flds3D(ijk,2,n)*flds3D(ijk,2,n))
+c 188        END DO
+c          END IF
+c The order of all the 3D fields is; u,v,T,q,z,div,vort,other
+c The order of all the 2D fields is; ps,Tg,Rnc,Rcv,slp
+Cc calculate total rainfall for 12 hour periods, or 1 timestep
+      IF (lother) THEN
+      DO 189 n=1,nfiles
+            cflds(8)= 'Rtr'
+         DO 188 ij=1,nij
+c the rainfall for the previous 1 minutes
+C            flds3D(ij,8,1)     = flds2D(ij,3,1) +flds2D(ij,4,1)
+c 0.2 factor is to make it rain rates per timestep
+c dt=2min, dtbs=10min
+c   CAN I USE BSNR instead?
+C            IF (ntime.eq.2) THEN
+C               cflds(11)= 'Rnr'
+C               flds2D(ij,3,n) =0.2*(flds2D(ij,3,n)-flds3D(2*nij+ij,8,n))
+C     &                             +flds2D(ij,4,n)-flds3D(3*nij+ij,8,n)
+C               cflds(12)= 'Rcr'
+C               flds2D(ij,4,n) =0.2*(flds2D(ij,4,n)-flds3D(3*nij+ij,8,n))
+C               cflds(8)= 'Rtr'
+               flds3D(ij,8,n)=flds2D(ij,3,n)+flds2D(ij,4,n)
+C            ENDIF
+C            flds3D(nij+ij,8,n) = flds2D(ij,4,n)
+c save this timesteps accumulated rainfall for use next time
+C            flds3D(2*nij+ij,8,n)=flds2D(ij,3,n)
+C            flds3D(3*nij+ij,8,n)=flds2D(ij,4,n)
+ 188     END DO
+ 189  END DO
+
+      END IF
+
+c------------------------------------------------
+c Calculate
+c------------------------------------------------
+c    Differences
+
+c The differences between two (nonlin) datasets are put in the last
+c kind register.  If differences between those and the linear model
+c output are generated, they are put in the second to last kind
+c register
+      iplace = nkinds 
+      PRINT*,'  '
+      IF (ldff) THEN
+         PRINT*,'Taking the difference specified in cdfknd(1&2) and ',
+     &          'putting the result in kind fdiff'
+         CALL Kknums(callknds,cdfknd(1),2,kinds,nkinds,nallknds
+     &              ,ikdiff,nktogrf)
+         PRINT*,'cdfknd(1:2),nktogrf, ikdiff(1:2) '
+         PRINT*, cdfknd(1),' ',cdfknd(2),' ',nktogrf,ikdiff(1),ikdiff(2)
+         PRINT*,'  '
+
+         DO 219 ifld=1,n3Dflds
+            nlevs = nk
+            IF (cflds(ifld)(1:1).EQ.'z') nlevs = nzplvls
+
+            npnts = ni*nj*nlevs
+            IF (lflds(ifld)) THEN
+               CALL Ndiffv(flds3D(1,ifld,iplace)
+     &                    ,flds3D(1,ifld,ikdiff(1))
+     &                    ,flds3D(1,ifld,ikdiff(2)), npnts)
+            END IF
+ 219     END DO
+
+         PRINT*,' '
+         DO 229 i2Dfld=1,n2Dflds
+            ifld = n3Dflds + i2Dfld
+            npnts = ni*nj*1
+            IF (lflds(ifld)) THEN
+               CALL Ndiffv(flds2D(1,i2Dfld,iplace)
+     &                    ,flds2D(1,i2Dfld,ikdiff(1))
+     &                    ,flds2D(1,i2Dfld,ikdiff(2)), npnts)
+            END IF
+ 229     END DO
+
+C      PRINT*,'after diffing in v6hr and v24hr = '
+C      DO j=1,nj,3
+C         ijk=ni*(j-1) + ni-10
+C         WRITE(*,'(2I3,A,1p2E20.13)') ni-10,j,'k=7-11'
+C     &       ,(flds2D(ijk,4,n),n=1,2)
+C         WRITE(*,'(1p5E20.13)') (flds3D(nij*(k-1)+ijk,2,1),k=7,11)
+C         WRITE(*,'(1p5E20.13)') (flds3D(nij*(k-1)+ijk,2,2),k=7,11)
+C      ENDDO
+
+         PRINT*,'  '
+         IF (ltlmerr) iplace = iplace-1
+      END IF
+
+      IF (ltlmerr) THEN
+         PRINT*,'Taking the difference specified in cdfknd(3&4) and ',
+     &          'putting the result in kind TLMer'
+         CALL Kknums(callknds,cdfknd(3),2,kinds,nkinds,nallknds
+     &              ,ikdiff,nktodiff)
+         PRINT*,'cdfknd(3:4),nktogrf, ikdiff(3:4) '
+         PRINT*, cdfknd(3),' ',cdfknd(4),' '
+     &          ,nktodiff,ikdiff(1),ikdiff(2)
+         PRINT*,'  '
+
+c The order of all the 3D fields; u,v,T,q,z,div,vort,other
+c The order of all the 2D fields; ps,Tg,Rnc,Rcv,slp
+
+         DO 239 ifld=1,n3Dflds
+            IF (lflds(ifld)) THEN
+               npnts = ni*nj*nk
+               CALL Ndiffv(flds3D(1,ifld,iplace)
+     &                    ,flds3D(1,ifld,ikdiff(1))
+     &                    ,flds3D(1,ifld,ikdiff(2)), npnts)
+            END IF
+ 239     END DO
+
+         DO 249 i2Dfld=1,n2Dflds
+            ifld = n3Dflds + i2Dfld
+            IF (lflds(ifld)) THEN
+               npnts = ni*nj*1
+               CALL Ndiffv(flds2D(1,i2Dfld,iplace)
+     &                    ,flds2D(1,i2Dfld,ikdiff(1))
+     &                    ,flds2D(1,i2Dfld,ikdiff(2)), npnts)
+            END IF
+ 249     END DO
+         PRINT*,'  '
+      END IF          ! End of taking differences
+c----------------------------------------------
+
+c      Statistics; max, min, rms, mean, st.dev.
+c        all stats for already selected times 
+c        ldostt  T or F in INITDATA group
+c        all levels
+c        subregion   
+c           i1stat,j1stat,nistat,njstat  
+c        from int.p5 for max, min, rms, mean.  Navy/horm3 for st. dev.
+
+      IF (ldostt) THEN
+         IF (ntime.EQ.1) THEN
+            DO nnams=1,nfiles
+               WRITE(12,'(A125)') cMSnams(nnams,1)
+            END DO
+         END IF
+
+c rrcorr
+C         IF (ntime.EQ.2) THEN
+C         DO 299 kind=3,5,2
+         DO 299 kind=1,nkinds
+c kdr         DO 299 kind=1,1
+            PRINT*,'  '
+            PRINT*,'Statistics calculated for ',ckinds(kind),
+     &             ', at time =  ',timsin(1)
+            PRINT*,'For (sub)domain i=',i1stat,' to ',i1stat+nistat-1
+     &            ,' and j=',j1stat,' to ',j1stat+njstat-1
+            PRINT*,' '
+            WRITE(12,255) 'Statistics calculated for ',ckinds(kind),
+     &             ', at time =  ',timsin(1)
+            WRITE(12,'(4(A,I3)/)') 
+     &           'For (sub)domain  i=',i1stat,' to ',i1stat+nistat-1
+     &                      ,' and j=',j1stat,' to ',j1stat+njstat-1
+ 255        FORMAT(//A,2X,A5,A,F6.2)
+
+            PRINT*,'Statistics for the chosen fields'
+            DO 269 ifld=1,n3Dflds
+               IF (lflds(ifld)) THEN
+                  ndot = 1
+                  IF (    cflds(ifld).EQ.'u  ' .OR. cflds(ifld).EQ.'v  '
+     &                .OR.cflds(ifld).EQ.'spd') ndot = 0
+
+                  nlvls = nk
+                  IF (cflds(ifld)(1:1).EQ.'z') nlvls = nzplvls
+                  PRINT*,'cflds(ifld), nlvls = ',cflds(ifld),' ', nlvls
+                  CALL Kcrms(flds3D(1,ifld,kind), stats(1,1,ifld,kind) 
+     &                ,ni,nj,nlvls,i1stat,j1stat,nistat,njstat,ndot
+     &                ,spval,cflds(ifld),12)
+               END IF
+ 269        END DO
+
+            ndot = 1
+            DO 279 i2Dfld=1,n2Dflds
+               ifld = n3Dflds + i2Dfld
+               IF (lflds(ifld)) THEN
+                  PRINT*,'cflds(ifld)= ',cflds(ifld)
+                  CALL Kcrms (flds2D(1,i2Dfld,kind),stats(1,1,ifld,kind)
+     &                ,ni,nj,1,i1stat,j1stat,nistat,njstat,ndot,spval
+     &                ,cflds(ifld),12)
+               END IF
+ 279        END DO
+ 299     END DO
+c rrcorr
+C         ENDIF
+
+c         horizontal correlation  from Navy/vertlat
+c         Correlations (1&2, NLMdiff field &4) or covariance
+c         (3or4 & 6or7 )
+c            Character labels (INITDATA)tell which combination 
+
+c Kknums finds numeric labels for kinds corresponding to the character
+c labels in INITDATA; cgrknd
+
+         CALL Kknums(callknds,cccknd,6,kinds,nkinds,nallknds
+     &              ,ikhcc,nktohcc)
+
+         IF (nktohcc.GE.2) THEN
+            IF (ccswtch.EQ.1.) THEN
+               PRINT*,'Calculating the correlation of ',cccknd(1),
+     &                ' and ',cccknd(2)
+            ELSE IF (ccswtch.EQ.2.) THEN
+               PRINT*,'Calculating the covariance of ',cccknd(1),
+     &                ' and',cccknd(2)
+            END IF
+            corcov = 0.
+
+            DO 309 ifld=1,n3Dflds
+               ndot = 1
+               IF (     cflds(ifld).EQ.'u  ' .OR. cflds(ifld).EQ.'v  '
+     &             .OR. cflds(ifld).EQ.'spd') ndot = 0
+               nlvls = nk
+               IF (cflds(ifld)(1:1).EQ.'z') nlvls = nzplvls
+               PRINT*,' '
+               PRINT*, cflds(ifld)
+
+               IF (lflds(ifld)) THEN
+                  CALL Kcorcov(flds3D(1,ifld,ikhcc(1))
+     &                ,flds3D(1,ifld,ikhcc(2)), ni,nj,i1stat,j1stat
+     &                ,nistat,njstat,nlvls,ndot, thresh,spval,ccswtch
+     &                ,corcov(1,ifld),work)
+               END IF
+ 309        END DO
+
+            ndot = 1
+            DO 319 ifld=1,n2Dflds
+               PRINT*,' '
+               PRINT*, cflds(n3Dflds+ifld)
+c               PRINT*,'ikhcc and ccswtch = ',ikhcc(1),ikhcc(2),ccswtch
+               IF (lflds(n3Dflds+ifld)) THEN
+                  CALL Kcorcov(flds2D(1,ifld,ikhcc(1))
+     &                ,flds2D(1,ifld,ikhcc(2)), ni,nj,i1stat,j1stat
+     &                ,nistat,njstat,1,ndot, thresh,spval,ccswtch
+     &                ,corcov(1,n3Dflds+ifld),work)
+               END IF
+ 319        END DO
+
+c value juggling for nice printing here, if necessary
+
+            WRITE(12,276)'time = ',timsin(1)
+
+            IF (ccswtch.EQ.1.) THEN
+               WRITE(12,255)'Correlation as a function of height'
+            ELSE IF (ccswtch.EQ.2.) THEN
+               WRITE(12,255)'Covariance as a function of height'
+            END IF
+
+            WRITE(12,275)'for ',cccknd(1),'and ', cccknd(2)
+            WRITE(12,274)' k   ',(cflds(ifld),ifld=1,n3Dflds)
+            DO 389 k=1,nk
+               WRITE(12,1100) k,(corcov(k,ivar),ivar=1,n3Dflds)
+ 389        END DO
+            WRITE(12,'(A)') '  '
+            WRITE(12,1100) nk+1,(corcov(nk+1,ivar),ivar=1,n3Dflds)
+            WRITE(12,'(A)') '  '
+
+            WRITE(12,274)' k   ',(cflds(n3Dflds+ifld),ifld=1,n2Dflds)
+            WRITE(12,1100) 1, (corcov(1,n3Dflds+ifld),ifld=1,n2Dflds)
+            WRITE(12,'(A)') '  '
+
+ 274        FORMAT(A,10(A3,'      '))
+ 275        FORMAT(4A/)
+ 276        FORMAT(/A,F6.2/)
+ 1100       FORMAT (I2,12(1X,F7.5))
+
+            WRITE(13) timsin(1),(corcov(nk+1,ivar),ivar=1,n3Dflds)
+     &                         ,(corcov(1,n3Dflds+ivar),ivar=1,n2Dflds)
+
+         END IF                     ! corcov test
+      END IF                        ! ldostt
+c-----------------------------------------------
+c call (user supplied) routine which calculates change in the forecast
+c aspect
+      IF (lchngJ) THEN
+         CALL KchngJ (flds3D,flds2D,stats   ,dx
+     &               ,ni,nj,nk,nkinds,n3Dflds,n2Dflds)
+      END IF
+
+c---------------------------------------------------------------------
+c Graph for selected times, reps, kinds
+c Figure which timsin to pass to Kplotint
+      CALL Kknums(callknds,ctmknd,1,kinds,nkinds,nallknds
+     &           ,ikgrf,nktogrf)
+      XTIME = timsin(ikgrf(1))
+      PRINT*,'kind of data used for time reference = ',ctmknd
+
+c itrep loop
+        DO 499 itrep=1,itreps(ntime)
+
+           PRINT*,' '
+           PRINT*,'calling DEFLT to reset all parameters to defaults'
+
+           CALL Kdeflt (nk,nflds,ldomapD,LWcontD,LWmapD
+     &     ,cgrkndD,cdescrD,ikgrfD,i1grfD,j1grfD,nigrfD,njgrfD,graphD
+     &     ,FLOWD, FHGHD,SMTHD,NDSHD,NHGHD,NSETD,NCMD,LLPD,LZEROD,NMMD 
+     &     ,SFSD ,SHLOWD, SHHIGHD,NUSCD, USCD, LUSCD, SHL1D, SLL1D
+     &                   ,ldomap,  LWcont, LWmap
+     &     ,cgrknd ,cdescr, ikgrf, i1grf,j1grf,nigrf,njgrf,graph,clbl
+     &     ,FLOW, FHGH,SMTH,NDSH,NHGH,NSET,NCM,LLP,LZERO,NMM
+     &     ,SFS ,SHLOW, SHHIGH,NUSC, USC, LUSC, SHL1, SLL1)
+
+c          read namelist group  GRFDATA if there are user input params
+
+           PRINT*,' '
+           PRINT*,'reading in namelist GRFDATA for new parameter ',
+     &            'values at; '
+           READ(11,GRFDATA)
+
+           PRINT*,' '
+           WRITE(*,410) 'timeslot number = ',ntime
+     &                 ,', times = ',(timsin(i),i=1,nfiles)
+           WRITE(*,410) ' and repetition number = ',itrep
+
+c          find numeric labels for kinds corresponding to the character
+c             labels in cgrknd (from GRFDATA)
+           CALL Kknums(callknds,cgrknd,6,kinds,nkinds,nallknds
+     &                ,ikgrf,nktogrf)
+           PRINT*,' '
+           PRINT*,'kinds to be graphed and their integer labels'
+           DO 409 i=1,nktogrf
+              PRINT*,cgrknd(i),'  ',ikgrf(i)
+ 409       END DO
+ 410       FORMAT(A,I2,A,10F6.2)
+
+c----------------------------
+c          kinds to be graphed loop
+           DO 459 k=1,nktogrf
+c----------------------------
+              IF (cgrknd(k).EQ.'ADJo1') THEN
+                 cJ=cJn(1)
+              ELSE IF (cgrknd(k).EQ.'ADJo2') THEN
+                 cJ=cJn(2)
+              END IF
+
+
+c             test whether to graph a field 
+c                plotter arguments; 
+c                row 1 the field and some parameters
+c                    2 the dimensions of the array, the number of
+c                      filled elements (ni or ni-1),the first point to
+c                      graph, the number of points to graph
+c                    3-4  RECNRC parameters
+c                    5 Ktitle parameters
+            
+              PRINT*,'  '
+
+            DO 429 ifld=1,n3Dflds
+               ndot = 1
+               IF (cflds(ifld).EQ.'u  ' .OR. cflds(ifld).EQ.'v  ' .OR. 
+     &             cflds(ifld).EQ.'spd' ) ndot = 0
+
+               IF (filled(graph(1,ifld),nk,fnul))  THEN
+                  slvls = sigh
+                  nlvls = nk
+                  IF (cflds(ifld)(1:1).EQ.'z') THEN
+                     slvls = zplvlsD
+                     nlvls = nzplvls
+                  ELSE IF (cflds(ifld)(1:1).EQ.'R') THEN
+                     slvls = 1.0
+                  END IF
+
+           PRINT*,'cdescr in main routine ',cdescr(k)
+
+                  CALL Kplotint 
+     &            (flds3D(1,ifld,ikgrf(k)),fnul,work
+     &            ,ni,nj,nlvls, ndot, i1grf,j1grf,nigrf-ndot,njgrf-ndot
+     &            ,xlat,xlon,dlat,dlon,clat,clon,dx,framej(1,0)
+     &            ,NSDflds(ifld),FLOW,FHGH,graph(1,ifld),NSET
+     &            ,NHGH,NDSH,SMTH, NMM,LLP,SFS
+     &            ,NCM,SHLOW,SHHIGH,NUSC, USC,LUSC,LZERO,SHL1,SLL1
+     &           ,ID,IOUT, itrep
+     &            ,cJ,cflds(ifld),XTIME,slvls,cgrknd(k),cdescr(k)
+     &            , cdfknd(1),clbl(1,ifld),spval,ICOUNT
+     &            ,lbighd,ldecup,ldomap)
+               END IF
+ 429        END DO
+
+            ndot = 1
+            DO 439 i2Dfld=1,n2Dflds
+               ifld = n3Dflds + i2Dfld
+               IF (filled(graph(1,ifld),1,fnul))  
+     &            CALL Kplotint 
+     &            (flds2D(1,i2Dfld,ikgrf(k)),fnul,work
+     &            ,ni,nj,1, ndot, i1grf,j1grf,nigrf-ndot,njgrf-ndot
+     &            ,xlat,xlon,dlat,dlon,clat,clon,dx,framej(1,0)
+     &            ,NSDflds(ifld),FLOW,FHGH,graph(1,ifld),NSET
+     &            ,NHGH,NDSH,SMTH, NMM,LLP,SFS
+     &            ,NCM,SHLOW,SHHIGH,NUSC, USC,LUSC,LZERO,SHL1,SLL1
+     &           ,ID,IOUT, itrep
+     &            ,cJ,cflds(ifld),XTIME,sigf(nk+1),cgrknd(k),cdescr(k)
+     &            ,cdfknd(1),clbl(1,ifld),spval,ICOUNT
+     &            ,lbighd,ldecup,ldomap)
+
+ 439        END DO
+
+ 459       END DO     ! end kinds loop
+ 499    END DO        ! end itrep loop
+c---------------------------------------------------------------------
+ 999  END DO          ! end time loop
+c---------------------------------------------------------------------
+
+      CALL GCLWK(2)
+      CALL FGCLOS
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Ahelmz (f,g,work,fmapx2,edepth,f0,dx,ni,nj,nk,iters)
+      real f(ni,nj,nk), g(ni,nj,nk), fmapx2(ni,nj), edepth(nk)
+     &,    work(ni,nj,2)
+c
+c  This routine uses a slow Fourier transform to solve for f given g 
+c  and the relation (del**2 + lambda) f = g.
+c  If iters.gt.1, then the solution is iterated to account for map
+c  factors which are ignored in the helmholtz solvers. 
+c
+c                  set constants
+      ni1=ni-1
+      nj1=nj-1
+c
+c                  loop over k
+      do k=1,nk
+         PRINT*,'k,f0,edepth = ',k,f0,edepth(k) 
+         xlambda=-f0*f0/edepth(k)  ! set lambda
+c
+c  Adjoint of the additional iterations to account for map factors 
+         if (iters.gt.1) then
+            PRINT*,'dx = ',dx
+            r2dx2=1./(2.*dx*dx)
+            do iter=2,iters
+               call Ifttran (work,f(1,1,k),work(1,1,2),ni,ni1,nj1) 
+               call Ihelmf (work,xlambda,dx,ni,ni1,nj1)
+               call Iftproj (f(1,1,k),work,work(1,1,2),ni,ni1,nj1,
+     &                       .true.)
+               call Aresetf (f(1,1,k),g(1,1,k),work,fmapx2,r2dx2,ni,nj)
+            enddo  ! end loop over iterations
+         endif
+c
+c  work(1,1,1) is array of spectra of g, and then g/(del**2+xlambda)
+          PRINT*,'calling Iftran'
+         call Ifttran (work,f(1,1,k),work(1,1,2),ni,ni1,nj1) 
+          PRINT*,'calling Ihelmz'
+         call Ihelmf (work,xlambda,dx,ni,ni1,nj1)
+          PRINT*,'calling Iftproj'
+         call Iftproj (g(1,1,k),work,work(1,1,2),ni,ni1,nj1,.false.)
+      enddo     ! end loop over k
+c
+      return
+      end
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kshapes(itrep)
+
+c     plots various user supplied shapes 
+
+      REAL x(51),y(51)
+      LOGICAL lorth
+c lorth flags whether it's an orthogonal or diagonal box
+
+      nwidth=0
+      nlength=0
+      ib1=0
+      jb1=0
+      nib=0
+      njb=0
+
+      IF (itrep.eq.1) THEN
+c vorticity box 
+Cc W3 vort box (and nonconv rain)
+C         lorth=.true.
+C         ib1 = 34
+C         jb1 = 43
+C         njb = 7
+C         nib = 7
+C         kb1 = 1
+C         nkb = 20
+Cc W2, W4 box
+C         lorth=.true.
+C         ib1 = 19
+C         jb1 = 61
+C         nib = 9
+C         njb = 11
+CC     V1
+CC         kb1 = 11
+CC         nkb = 10
+CC     V2
+C         kb1 = 1
+C         nkb = 20
+Cc S2 
+C         lorth=.true.
+C          ib1 = 28
+C          jb1 = 29
+C          nib = 4
+C          njb = 8
+c S3 
+        lorth=.true.
+         ib1 = 30
+         jb1 = 59
+         nib = 17
+         njb = 4
+
+      ELSEIF (itrep.eq.3) THEN
+c NONCONV rain box 
+Cc W3 
+C        lorth=.true.
+C         ib1 = 34
+C         jb1 = 43
+C         njb = 7
+C         nib = 7
+Cc W2, W4 
+C        lorth=.true.
+C         ib1 = 19
+C         jb1 = 61
+C         nib = 9
+C         njb = 11
+Cc S2 
+C         lorth=.true.
+C          ib1 = 28
+C          jb1 = 29
+C          nib = 4
+C          njb = 8
+c S3 
+        lorth=.true.
+         ib1 = 30
+         jb1 = 59
+         nib = 17
+         njb = 4
+
+      ELSEIF (itrep.eq.2) THEN
+c CONV rain box 
+Cc W1 W3
+C         lorth=.true.
+C         ib1 = 24
+C         jb1 = 49
+C         nib = 12
+C         njb = 4
+Cc W2, W4 box
+C         lorth=.true.
+C         ib1 = 19
+C         jb1 = 61
+C         nib = 9
+C         njb = 11
+Cc S2 
+C         lorth=.false.
+C          ib1 = 7
+C          jb1 = 37
+C          nwidth = 3
+C          nlength = 4
+c S3
+         lorth=.false.
+          ib1 = 11
+          jb1 = 43
+          nwidth = 3
+          nlength = 9
+      ENDIF
+
+
+C note switch of i and j, to adopt NCAR graphics convention!
+C      CALL SETUSV('LW',3000)
+C      IF (lorth) THEN
+C          bi1 = REAL(jb1)-.5
+C          bj1 = REAL(ib1)-.5
+C          rnib = REAL(njb) 
+C          rnjb = REAL(nib)
+C          PRINT*,'orthog box lower left ',bi1,bj1,' size ',rnib,rnjb
+C          CALL LINE(bi1     ,bj1       ,bi1+rnib,bj1)
+C          CALL LINE(bi1+rnib,bj1       ,bi1+rnib,bj1+rnjb)
+C          CALL LINE(bi1+rnib,bj1+rnjb,bi1       ,bj1+rnjb)
+C          CALL LINE(bi1     ,bj1+rnjb,bi1       ,bj1)
+C       ELSE
+C          bi1 = REAL(jb1)
+C          bj1 = REAL(ib1)-.5
+C          rnw = REAL(nwidth) 
+C          rnl = REAL(nlength)
+C          PRINT*,'diagonal box lower left ',bi1,bj1,' size ',rnw,rnl
+C          CALL LINE(bi1        ,bj1        ,bi1-rnw    ,bj1+rnw)
+C          CALL LINE(bi1-rnw    ,bj1+rnw    ,bi1-rnw+rnl,bj1+rnw+rnl)
+C          CALL LINE(bi1-rnw+rnl,bj1+rnw+rnl,bi1+rnl    ,bj1+rnl)
+C          CALL LINE(bi1+rnl    ,bj1+rnl    ,bi1        ,bj1)
+C       ENDIF
+C       CALL SETUSV('LW',1000)
+
+c-----------------------------------------------
+c moisture flux line (VQ1 )
+C          ib1 = 13
+C          jb1 = 24
+C          nib = 1
+C          njb = 8
+c VQ1 and V1 Gulf 50km 11/97
+C         ib1 = 22
+C         jb1 = 39
+C         nib = 1
+C         njb = 11
+Cc NWQ1 Gulf 50km; (v-u)*q
+C      rI1 = 10.
+C      rI2 = 17.
+C      rJ1 = 40.
+C      rJ2 = 47.
+C      CALL SETUSV('LW',2000)
+C      CALL LINE(rJ1,rI1,rJ2,rI2)
+
+c calculate and draw a circle used to calculate the circulation
+c      ni=76
+c      nj=101
+c      pi = 3.14159265
+c      DO i=1,51
+c         angle = 2.*pi*REAL(i-1)/REAL(50)
+c         x(i) = REAL((nj+1)/2)+.5 + 3.*COS(angle)
+c         y(i) = REAL(ni/2)+.5 + 3.*SIN(angle)
+c      END DO
+c      CALL CURVE(x,y,51)
+c-----------------------------------------------
+      RETURN
+      END
+C
+c x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x
+c
+      SUBROUTINE KchngJdelta(flds3D,flds2D,stats   ,dx
+     &                 ,ni,nj,nk,nkinds,n3Dflds,n2Dflds)
+
+      DIMENSION
+     &   flds3D(ni,nj,nk,n3Dflds,nkinds)
+     &  ,flds2D(ni,nj   ,n2Dflds,nkinds)
+     &  ,stats(5,nk,n3Dflds+n2Dflds,nkinds)
+
+c stats has values max,min,mean,rms,st.dev  for each level and kind
+c      PRINT*,' '
+c      PRINT*,'No change in J calculated'
+
+      chngJ = 0.
+      chngJlin = 0.
+
+Cc  S2 Conv rain box (diagonal)
+C          ib1 = 7
+C          jb1 = 37
+C          nwidth = 3
+C          nlength = 4
+Cc  S3 Conv rain box (diagonal)
+C         ib1 = 11
+C         jb1 = 43
+C         nwidth = 3
+C         nlength = 9
+
+C         xn=nwidth*nlength
+C         factor=1./xn
+C         do i=0,nwidth-1
+C         do j=0,nlength-1
+c nlmdiff
+C            chngJ=chngJ+ flds3D(ib1+i+j,jb1-i+j,2,8,3)
+c nlmdiff and TLMo1 when TLMer combo is done 
+c These use differences of last 2 accum rains written by NLM and TLM,
+c which doesn't account for 2dt correction
+C            chngJ=chngJ+ flds3D(ib1+i+j,jb1-i+j,2,8,6)
+C            chngJlin=chngJlin+ flds3D(ib1+i+j,jb1-i+j,2,8,3)
+c These take account of the correction factor; the runs set raincv=0
+c at beginning of last time step, so I just use raincv here, rather
+c than a diff of raincv s.
+C            chngJ=chngJ+ flds2D(ib1+i+j,jb1-i+j,4,6)
+C            chngJlin=chngJlin+ flds2D(ib1+i+j,jb1-i+j,4,3)
+C            PRINT*,'point = ',ib1+i+j,jb1-i+j,'raincv rate= '
+C     &            ,flds2D(ib1+i+j,jb1-i+j,4,3)
+C     &            ,flds2D(ib1+i+j,jb1-i+j,4,6)
+C         end do
+C         end do
+C      chngJ=chngJ*factor
+C      chngJlin=chngJlin*factor
+C         print *,' '
+C         print *,' J= area mean(raincv) in diag box:  fac=',factor
+C         print *,' J= area mean(raincv+rainncv) in diag box:  fac='
+C     &          ,factor
+C         print *,' J= area mean(rainncv) in diag box:  fac=',factor
+C         print *,'  southern corner=',ib1,jb1
+C     &          ,'  box size=',nwidth,nlength
+c--------------------------------------------------------------------
+
+CC  W4 box (vort and rain)
+C      ib1 = 19
+C      jb1 = 61
+C      nib = 9
+C      njb = 11
+Cc V2
+C      kb1 = 1
+      nkb = 20
+c V1
+C      kb1 = 11
+C      nkb = 10
+      PRINT*,' '
+      PRINT*,'From nonlinear diff for box ',ib1,jb1,kb1
+     &      ,' size ',nib,njb,nkb
+
+c The order of all the 3D fields is; u,v,T,q,z,div,vort,other
+c The order of all the 2D fields is; ps,Tg,Rnc,Rcv,slp
+
+C      PRINT*,'i,j,k,flds3D(i,j,k,7,3)'
+C      DO k=kb1,kb1+nkb-1
+C      DO j=jb1,jb1+njb-1
+C      DO i=ib1,ib1+nib-1
+C         chngJ=chngJ+ flds3D(i,j,k,7,3)
+C         PRINT*,i,j,k,flds3D(i,j,k,7,3)
+CCc Conv rain rate (4 because of modified model rain output)
+CC            chngJ=chngJ+ flds2D(i,j,4,6)
+CC            chngJlin=chngJlin+ flds2D(i,j,4,3)
+CC            PRINT*,'point = ',i,j,'raincv rate= '
+CC     &            ,flds2D(i,j,4,3),flds2D(i,j,4,6) 
+C      END DO
+C      END DO
+C      END DO
+c vort;
+c used this for W4 runs up to 5/8/00    ; 
+C      xkfact=1./nk
+c should have used (reran W4 to fix on 5/9)
+c removed because vorticity already has it in there;  *2.*dx
+      xkfact=1./nkb 
+C      xkfact=1.
+      factor = xkfact/(nib*njb)
+      print *,' J= area mean(vort) in diag box:  fac=',factor
+      chngJ=chngJ*factor
+C      chngJlin=chngJlin*factor
+CC
+c----------------------------------------------------------
+C       PRINT*,'k, max u, max v, max T ,chngJ'
+C       DO 159 k=1,nk
+C          PRINT*,k,stats(1,k,1,1),stats(1,k,2,1),stats(1,k,3,1),chngJ
+C       DO 159 j=1,nj
+C       DO 159 i=1,ni
+Cc change in J purely from adjoint; u and v contributions
+Cc renormed by MAX adj field value, (different for each level)
+C          chngJ = chngJ + flds3D(i,j,k,1,1) *flds3D(i,j,k,1,1)
+C     &                                      *3./stats(1,k,1,1)
+C     &                  + flds3D(i,j,k,2,1) *flds3D(i,j,k,2,1)
+C     &                                      *3./stats(1,k,2,1)
+C 159   END DO
+Cc change in J purely from adjoint; T and ps contributions
+C       DO 169 k=1,nk
+C       DO 169 j=1,nj-1
+C       DO 169 i=1,ni-1
+C          chngJ = chngJ + flds3D(i,j,k,3,1) *flds3D(i,j,k,3,1)
+C     &                                      *1./stats(1,k,3,1)
+C          IF (k.EQ.1) THEN
+C             chngJ = chngJ + flds2D(i,j,1,1) *flds2D(i,j,1,1)
+C     &                                       *1./stats(1,k,n3Dflds+1,1)
+C          END IF
+C 169   END DO
+
+       PRINT*,' '
+       PRINT*,'change in J = ',chngJ
+       PRINT*,'change in Jlin = ',chngJlin
+       PRINT*,' '
+
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE KchngJ(flds3D,flds2D,stats   ,dx
+     &                 ,ni,nj,nk,nkinds,n3Dflds,n2Dflds)
+
+      DIMENSION
+     &   flds3D(ni,nj,nk,n3Dflds,nkinds)
+     &  ,flds2D(ni,nj   ,n2Dflds,nkinds)
+     &  ,stats(5,nk,n3Dflds+n2Dflds,nkinds)
+     &  ,ewght(5)
+
+      PARAMETER (Cp=1005.7, R=287.04, L=2.5104E+06
+     &          ,Tr=270., pr=100.)
+
+
+      bsJ = 0.
+      chngJ = 0.
+      ib1=0
+      jb1=0
+      nib=0
+      njb=0
+c E table for q,T perts; moist SV 
+      kb1=1
+      nkb=nk
+      ewght(1)=1./(2.*nkb)
+      ewght(2)=1./(2.*nkb)
+      ewght(3)=Cp/(2.*Tr*nkb)
+C      ewght(4)=L*L/(2.*Cp*Tr*nkb)
+      ewght(5)=R*Tr/(2.*pr*pr)
+
+      nwidth=0
+      nlength=0
+
+c--------------------------------------------------------------------
+
+CC  W4 box (vort and  both rains)
+C      ib1 = 19
+C      jb1 = 61
+C      nib = 9
+C      njb = 11
+Cc V2
+C      kb1 = 1
+C      nkb = 20
+Cc V1
+C      kb1 = 11
+C      nkb = 10
+
+c The order of all the 3D fields is; u,v,T,q,z,div,vort,other
+c The order of all the 2D fields is; ps,Tg,Rnc,Rcv,slp
+
+c-----------
+c VORT
+c-----------
+Cc W3 vort box (and nonconv rain)
+C         ib1 = 34
+C         jb1 = 43
+C         njb = 7
+C         nib = 7
+C         kb1 = 1
+C         nkb = 20
+Cc W4 (above) same as both rains
+Cc S2 and S3 no vorticity
+Cc S2 
+C          ib1 = 28
+C          jb1 = 29
+C          nib = 4
+C          njb = 8
+Cc S3 
+C         ib1 = 30
+C         jb1 = 59
+C         nib = 17
+C         njb = 4
+Cc
+      PRINT*,' '
+      PRINT*,'From nonlinear diff for box ',ib1,jb1,kb1
+     &      ,' size ',nib,njb,nkb
+C      bsJ = 0.
+      chngJ = 0.
+      chngJr = 0.
+
+c E table for q,T perts; moist SV 
+      DO nf=1,3
+      DO k=kb1,kb1+nkb-1
+         chngJ=chngJ+ stats(4,k,nf,3)*stats(4,k,nf,3)*ewght(nf)
+      ENDDO
+      PRINT*,'nf, wght, chngJ = ',nf,ewght(nf),chngJ
+      ENDDO
+      chngJ=chngJ+ 
+     &      stats(4,1,n3Dflds+1,3)*stats(4,1,n3Dflds+1,3)*ewght(5)
+      factor=1.
+      PRINT*,'nf, wght, chngJ = ',5,ewght(5),chngJ
+      PRINT*,'E nonlinear from weighted rms profiles = ',chngJ
+
+C      DO k=kb1,kb1+nkb-1
+C      DO j=jb1,jb1+njb-1
+C      DO i=ib1,ib1+nib-1
+C         bsJ=bsJ+ flds3D(i,j,k,7,1)
+CC         chngJ=chngJ+ flds3D(i,j,k,7,1)
+CC         PRINT*,i,j,k,flds3D(i,j,k,7,1)
+C         chngJ=chngJ+ flds3D(i,j,k,7,1)
+C         IF (k.eq.kb1) chngJr=chngJr+ flds2D(i,j,3,1)+ flds2D(i,j,4,1)
+C         PRINT*,i,j,k,flds3D(i,j,k,7,1)
+C      END DO
+C      END DO
+C      END DO
+C      xkfact=1./nkb 
+C      factor = xkfact/(nib*njb)
+C      print *,' J= area mean(vort) in diag box:  fac=',factor
+
+      bsJ=bsJ*factor
+      chngJ=chngJ*factor
+       PRINT*,' '
+CC         print *,'  southern corner=',ib1,jb1
+CC     &          ,'  box size=',nib,njb,' factor=',factor
+C       PRINT*,'vort bsJ = ',bsJ
+C       PRINT*,'change in vort J = ',chngJ
+C       PRINT*,'change in rain J = ',chngJr
+C       PRINT*,' '
+
+c-----------
+c NONCONV RAIN RATE
+c-----------
+Cc W3 same as vort
+Cc W4 same as vort and conv
+Cc S2 
+C          ib1 = 28
+C          jb1 = 29
+C          nib = 4
+C          njb = 8
+Cc S3 
+C         ib1 = 30
+C         jb1 = 59
+C         nib = 17
+C         njb = 4
+C      bsJ = 0.
+C      chngJ = 0.
+C      DO j=jb1,jb1+njb-1
+C      DO i=ib1,ib1+nib-1
+CC            chngJ=chngJ+ flds2D(i,j,3,3)
+C            bsJ=bsJ + flds2D(i,j,3,1)
+CC            PRINT*,'point = ',i,j,'rainncv rate= '
+CC     &            ,flds2D(i,j,3,1),flds2D(i,j,3,3) 
+C      END DO
+C      END DO
+C      xkfact=1.
+C      factor = xkfact/(nib*njb)
+C      bsJ=bsJ*factor
+CC      chngJ=chngJ*factor
+C       PRINT*,' '
+CC         print *,'  southern corner=',ib1,jb1
+CC     &          ,'  box size=',nib,njb,' factor=',factor
+C       PRINT*,'Nonconv rain rate bsJ = ',bsJ
+CC       PRINT*,'change in J = ',chngJ
+C       PRINT*,' '
+c-----------
+Cc CONV RAIN RATE rectangular
+c-----------
+Cc  W3 Conv rain box
+C         ib1 = 24
+C         jb1 = 49
+C         nib = 12
+C         njb = 4
+c W4 uses same rect as vort (and nonconv)
+c S2,S3 use diagonal (below)
+C      bsJ = 0.
+CC      chngJ = 0.
+C      DO j=jb1,jb1+njb-1
+C      DO i=ib1,ib1+nib-1
+CC            chngJ=chngJ+ flds2D(i,j,4,3)
+C            bsJ=bsJ + flds2D(i,j,4,1)
+CC            PRINT*,'point = ',i,j,'raincv rate= '
+CC     &            ,flds2D(i,j,4,1),flds2D(i,j,4,3) 
+C      END DO
+C      END DO
+C         print *,'  southern corner=',ib1,jb1
+C     &          ,'  box size=',nib,njb,' factor=',factor
+c-----------
+Cc CONV RAIN RATE diagonal
+c-----------
+Cc  S2 Conv rain box (diagonal)
+C          ib1 = 7
+C          jb1 = 37
+C          nwidth = 3
+C          nlength = 4
+Cc  S3 Conv rain box (diagonal)
+C         ib1 = 11
+C         jb1 = 43
+C         nwidth = 3
+C         nlength = 9
+C         nib=nwidth
+C         njb=nlength
+C
+C         xn=nwidth*nlength
+C         factor=1./xn
+C         do i=0,nwidth-1
+C         do j=0,nlength-1
+Cc These take account of the correction factor; the runs set raincv=0
+Cc at beginning of last time step, so I just use raincv here, rather
+Cc than a diff of raincv s.
+C            bsJ=bsJ+ flds2D(ib1+i+j,jb1-i+j,4,2)
+C            chngJ=chngJ+ flds2D(ib1+i+j,jb1-i+j,4,3)
+CC            chngJlin=chngJlin+ flds2D(ib1+i+j,jb1-i+j,4,3)
+C            PRINT*,'point = ',ib1+i+j,jb1-i+j,'raincv rate= '
+C     &            ,flds2D(ib1+i+j,jb1-i+j,4,1)
+C     &            ,flds2D(ib1+i+j,jb1-i+j,4,3)
+C         end do
+C         end do
+CC      chngJ=chngJ*factor
+CC      chngJlin=chngJlin*factor
+CC         print *,' '
+C         print *,' J= area mean(raincv) in diag box:  fac=',factor
+CC         print *,' J= area mean(raincv+rainncv) in diag box:  fac='
+CC     &          ,factor
+CC         print *,' J= area mean(rainncv) in diag box:  fac=',factor
+C         print *,'  southern corner=',ib1,jb1
+C     &          ,'  box size=',nwidth,nlength
+
+C      xkfact=1.
+C      factor = xkfact/(nib*njb)
+C      bsJ=bsJ*factor
+C      chngJ=chngJ*factor
+C       PRINT*,' '
+C       PRINT*,'Conv rain rate bsJ = ',bsJ
+C       PRINT*,'change in J = ',chngJ
+      PRINT*,' '
+
+
+CC
+c----------------------------------------------------------
+      RETURN
+      END
+
+c
+c x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x
+c
+      SUBROUTINE KMSUPMP(xlon,xlat,clon,DELX,NI,NJ,IDOT,ID,IOUT,framej)
+
+      DIMENSION xlon(NI,NJ), xlat(NI,NJ),framej(4)
+C
+C  DETERMINE SET CALL AND CALL SUPMAP FOR NLM
+C
+      SRATIO=FLOAT(NI-IDOT)/FLOAT(NJ-IDOT)
+      IF(SRATIO.GT.1.) THEN
+         YA=.05
+         XA=0.5*(1.-.9/SRATIO)
+      ELSE
+         YA=0.5*(1.-.9*SRATIO)
+         XA=.05
+      ENDIF
+      XB=1.-XA
+      YB=1.-YA
+c shift down a bit
+      YA=YA-.04
+      YB=YB-.04
+c this SET put here to fix problem with subdomain map background,
+c but probably should have been here anyway.  SET at bottom removed.
+
+      CALL SET (XA,XB,YA,YB ,1.,FLOAT(NJ-IDOT),1.,FLOAT(NI-IDOT),1)
+c
+c  draw exterior box
+c
+      if (ID.eq.0) then
+         x1=1.
+         y1=1.
+         x2=float(nj)
+         y2=float(ni)
+         CALL FRSTPT (X1,Y1)
+         CALL VECTOR (X1,Y2)
+         CALL VECTOR (X2,Y2)
+         CALL VECTOR (X2,Y1)
+         CALL VECTOR (X1,Y1)
+         return
+      end if
+C
+      TLAT1=60.
+      TLAT2=30.
+      C1LAT = xlat( 1, 1)
+      C1LON = xlon( 1, 1)
+      C2LAT = xlat(NI-IDOT,NJ-IDOT)
+      C2LON = xlon(NI-IDOT,NJ-IDOT)
+C
+      CALL MAPPOS (XA,XB,YA,YB)
+C
+      IF (ID.EQ.1) THEN
+         CALL SUPMAP (3,TLAT2,clon,TLAT1,C1LAT,C1LON,C2LAT,C2LON,2
+     A            ,1010,IOUT,0,IER)
+      ELSE
+         PRINT*,'calling SUPMAP from ELSE'
+         CALL SUPMAP (3,TLAT2,clon,TLAT1,C1LAT,C1LON,C2LAT,C2LON,2
+     A            ,0,IOUT,0,IER)
+c kdr replace dots with lines
+c last arguments to supmap are:
+c JGRID=latlines, IUSOUT(1 for states, 0 if not),idot(0=line,1=dots)
+c
+      ENDIF
+
+      IF (framej(1).LT.0.) THEN
+          framej(1) = XA
+          framej(2) = XB
+          framej(3) = YA
+          framej(4) = YB
+      ELSE
+         CALL GETSET(framej(1),framej(2),framej(3),framej(4)
+     &           ,DUM1,DUM2,DUM3,DUM4,IDUM)
+      ENDIF
+
+C      PRINT*,'SET is called in KMSUPMP with values '
+C      WRITE(*,'(8F8.2,I2)') framej(1),framej(2),framej(3),framej(4)
+C     &      ,1.,FLOAT(NJ-IDOT),1.,FLOAT(NI-IDOT),1
+C      CALL SET (framej(1),framej(2),framej(3),framej(4)
+C     &         ,1.,FLOAT(NJ-IDOT),1.,FLOAT(NI-IDOT),1)
+
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kplotint
+     &           (field, fnul,WORK
+     &           ,ni,nj,nk, ndot, i1grf,j1grf,nigrf,njgrf
+     &           ,xlat,xlon,dlat,dlon,clat,clon,dx,framej,NSD
+     &           ,FLOW,FHGH,fgraph,NSET, NHGH,NDSH,SMTH, NMM,LLP,SFS
+     &           ,NCM,SHLOW,SHHIGH,NUSC, USC,LUSC,LZERO,SHL1,SLL1
+     &           ,ID,IOUT, itrep
+     &           ,cJ,cfld,XTIME,sigma,cgrknd,cdescr,cdfknd,cclbl,spval
+     &           ,ICOUNT,lbighd,ldecup,ldomap)
+
+      DIMENSION field(ni,nj,nk), fgraph(nk), sigma(nk),
+     &          xlon(ni,nj), xlat(ni,nj), WORK(nj,ni),
+     &          dlon(ni,nj), dlat(ni,nj), framej(4,0:1),
+     &          sublon(nigrf,njgrf), sublat(nigrf,njgrf),
+     &          SHLOW(3),SHHIGH(3), USC(20),LUSC(20), dmfram(4)
+      CHARACTER cfld*3, cgrknd*5,cdfknd*5, cdescr*20
+      CHARACTER*1 cclbl(nk) ,cJ*2
+      LOGICAL ldomap,lbighd,ldecup
+c sigma can be filled with either full or half levels, depending on
+c the field, but only nk elements of either
+
+
+C  call plotting routine for selected fields
+      PRINT*,' '
+      PRINT*,'plotting ',cgrknd,'  ',cfld
+
+      CALL CPSETR('SPV - special value',spval)
+      CALL CPSETI('NSD - num sig digits',NSD)
+      DO 100 K=1,nk
+      IF (fgraph(K).NE.fnul) THEN
+         CALL REORDA (field(1,1,K),WORK,ni,nj,1)
+
+         IF (nigrf+ndot.EQ.ni) THEN
+c           use the GFLAS contents, which include info from the
+c           KMSUPMAP SET call.
+            PRINT*,' '
+            PRINT*,'SET is called in Kplotint with values '
+            PRINT*,'XA,XB,YA,YB,1.,FLOAT(njgrf),1.,FLOAT(nigrf),1'
+            PRINT*,framej(1,ndot),framej(2,ndot)
+     &            ,framej(3,ndot),framej(4,ndot)
+     &            ,1.,FLOAT(njgrf),1.,FLOAT(nigrf),1
+
+            IF (ldomap) THEN
+               CALL GFLAS3(ndot)
+C               PRINT*,'calling Kshapes from inside ldomap and full dom'
+C               CALL Kshapes(itrep)
+            ENDIF
+            IF (lbighd) CALL GFLAS3(2)
+            CALL SET (framej(1,ndot),framej(2,ndot)
+     &               ,framej(3,ndot),framej(4,ndot)
+     &               ,1.,FLOAT(njgrf),1.,FLOAT(nigrf),1)
+               PRINT*,'calling Kshapes after SET call'
+               CALL Kshapes(itrep)
+            dmfram(1:4) = framej(1:4,ndot)
+         ELSE
+c        don't use GFLAS(0,1) contents for map background
+c        do use GFLAS(2) for the big header
+           IF (lbighd) CALL GFLAS3(2)
+
+           IF (ldomap) THEN
+             IF (ndot.EQ.0) THEN
+                sublon(:,:) = dlon(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                sublat(:,:) = dlat(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                subclon = dlon(i1grf+nigrf/2,j1grf+njgrf/2)
+             ELSE
+                PRINT*,'sub ranges i=',i1grf,i1grf+nigrf-1
+     &                ,' j=',j1grf,j1grf+njgrf-1
+                sublon(:,:) = xlon(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                sublat(:,:) = xlat(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                PRINT*,'sub centers i=',i1grf+nigrf/2
+     &                ,' j=',j1grf+njgrf/2
+                subclon = xlon(i1grf+nigrf/2,j1grf+njgrf/2)
+             END IF
+c            This includes a call to SET using SUPMAP information->
+c            put into dmfram so it can be used again.
+             PRINT*,'i1grf,j1grf,nigrf,njgrf,subclon = '
+     &              ,i1grf,j1grf,nigrf,njgrf,subclon
+             dmfram(1) = -1.
+             CALL KMSUPMP(sublon,sublat,subclon,dx
+     &                   ,nigrf,njgrf,0,ID,IOUT,dmfram)
+             WRITE(*,'(A,4(1X,E7.4))') 'dmfram = ',(dmfram(i),i=1,4)
+             framej(1:4,ndot) = dmfram(1:4)
+             CALL Kshapes(itrep)
+           ELSE
+c            SET is not called by SUPMAP here, so call it separately
+c            by doing the KMSUPMP calcs of the edges, and passing to
+c            SET.  REMEMBER; this will NOT make the same size frame
+c            as a call to SUPMAP would.
+             SRATIO=FLOAT(nigrf)/FLOAT(njgrf)
+             PRINT*,'SRATIO in KMSUPMP = ',SRATIO
+             IF(SRATIO.GT.1.) THEN
+                dmfram(3)=.05
+                dmfram(1)=0.5*(1.-.9/SRATIO)
+             ELSE
+                dmfram(3)=0.5*(1.-.9*SRATIO)
+                dmfram(1)=.05
+             ENDIF
+             dmfram(2)=1.-dmfram(1)
+             dmfram(4)=1.-dmfram(3)
+c shift down a bit
+             dmfram(1)=dmfram(1)-.04
+             dmfram(2)=dmfram(2)-.04
+             CALL SET (dmfram(1),dmfram(2),dmfram(3),dmfram(4),
+     &                 1.,FLOAT(njgrf),1.,FLOAT(nigrf),1)
+           END IF
+         END IF
+c        special values in label corner
+         IF (cclbl(K).NE.' ') THEN
+            fracjb = (dmfram(2)-dmfram(1))/30.
+            fracib = (dmfram(4)-dmfram(3))/15.
+            njbox = INT(REAL(njgrf)*fracjb + 1.)
+            nibox = INT(REAL(nigrf)*fracib + 1.)
+            WORK(j1grf:j1grf+njbox-1,i1grf:i1grf+nibox-1) = spval
+            WRITE(*,999) (WORK(i,i),i=1,njbox)
+ 999        FORMAT('WORK from box ',10E11.3)
+            CALL CPSETR('SPV - special value',spval)
+            boxjcen = REAL(njbox)/2. +1.
+            boxicen = REAL(nibox)/2. +2.
+c Jrain            boxicen = REAL(nibox)/2. +1.
+            PRINT*,'fracjb,fracib,njbox,nibox,boxjcen,boxicen ='
+     &            ,fracjb,fracib,njbox,nibox,boxjcen,boxicen
+            chsiz = .9*fracjb
+            CALL FGFNUM(cclbl(K),1,chsiz,boxjcen,boxicen,0)
+         END IF
+
+         
+         CALL RECNRC (WORK(j1grf,i1grf),nj,njgrf,nigrf,
+     &                FLOW,FHGH,fgraph(K),NSET,NHGH,
+     &                NDSH,SMTH,NMM,LLP,SFS,NCM,SHLOW,SHHIGH,
+     &                NUSC,USC,LUSC,LZERO,SHL1,SLL1,IMDUM)
+
+         PRINT*,'In Kplotint cdescr = ',cdescr
+c Jrain
+         CALL Ktitle(cJ,cfld,XTIME,sigma(K),cgrknd,cdescr,cdfknd
+     &              ,ICOUNT,lbighd,ldecup)
+c         CALL PLABEL
+         CALL FRAME
+         IF (ICOUNT.GT.0) ICOUNT=ICOUNT+1
+      END IF
+ 100  END DO
+
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kreadt(flds3D,flds2D,nvarsi,rvarsi,work
+     &                 ,timsin,ir1,ikrd,kinds,iunit1,ifldsrw,ifldsr
+     &                 ,renorm,lvarsi,ldecup,lprflds
+     &                 ,crdknd,callknds,cMSnams, cfldsrw,cfldsi,cfldsr
+     &                 ,ni,nj,nk,nij,nijk,nfiles,nkinds,nallknds,n3Dflds
+     &                 ,n2Dflds,nlvars,nrvars,nnvars,nfieldsx,nbsized
+     &                 ,nworkr)
+
+      CHARACTER*5 crdknd(6), callknds(nallknds)
+      CHARACTER*(*) cMSnams(6,10)
+      CHARACTER*(8) cfldsi(nfieldsx,nfiles) ,cfldsrw(nfieldsx)
+     &             ,cfldsr(nfieldsx,nfiles)
+      LOGICAL ldecup,lprflds ,lvarsi(nlvars,nfiles)
+      INTEGER ifldsr(3,nfiles), ifldsrw(3)
+c      PARAMETER (nij=ni*nj, nijk=nij*nk)
+
+      DIMENSION
+     &  timsin(nfiles),ir1(nfiles),iunit1(nfiles,2)
+     &  ,work(ni,nj,nfiles),ikrd(6),kinds(nfiles)
+     &  ,flds3D(nijk,n3Dflds,nkinds),flds2D(nij,n2Dflds,nkinds)
+     &  ,rvarsi(nrvars,nfiles) ,nvarsi(nnvars,nfiles)
+
+c
+      CALL Kknums(callknds,crdknd,6,kinds,nfiles,nallknds,ikrd,nktord)
+      PRINT*,'  '
+      PRINT*,'crdknd in readt; ', ( crdknd(i)//' ',i=1,nktord)
+      PRINT*,'kinds associated with crdknd ', (kinds(i),i=1,nktord)
+
+      DO 199 nf=1,nktord
+      IF ( crdknd(nf)(4:4).NE.'b') THEN
+
+      IF (crdknd(nf)(4:5).EQ.'in') THEN
+         xtime = timsin(nf)
+      ELSE
+         xtime = ABS(timsin(nf))*60.
+      END IF
+      CALL Nrcountn (ir1(nf),iunit,ntape,xtime,iunit1(nf,1)
+     &              ,rvarsi(1,nf),nvarsi(1,nf),0.,nnvars,nrvars)
+      IF (iunit .NE.iunit1(nf,2)) THEN
+         CALL Nacquire(cMSnams(nf,ntape),'O',0,.T.
+     &                ,nbsized,iunit)
+         CALL Nopen(nvarsi(2,nf),iunit,lprflds)
+         iunit1(nf,2) = iunit
+      END IF
+
+      ndimfld3 = nijk*n3Dflds
+      ndimfld2 = nij *n2Dflds
+      CALL Nreadt (flds3D(1,1,nf),flds2D(1,1,nf),work
+     &            ,xtimef,timsin(nf)
+     &            ,cfldsrw,cfldsr(1,nf),cfldsi(1,nf)
+     &            ,ifldsrw,ifldsr(1,nf)
+     &            ,nvarsi(1,nf),.T.,1,0,ir1(nf),iunit,lprflds
+     &            ,nnvars,nworkr,ndimfld3,ndimfld2,'  ')
+      PRINT*,'after Nreadt, before decoupling nf = ',nf
+
+c fill in extraneous edge values of x-grid with 0s
+      DO ifld=3,n3Dflds
+         CALL Cbdrycg(flds3D(1,ifld,nf),ni,nj,nk)
+      END DO
+      DO ifld=1,n2Dflds
+         CALL Cbdrycg(flds2D(1,ifld,nf),ni,nj, 1)
+      END DO
+
+c decoupling
+      IF (ldecup) THEN
+         PRINT*,'ikrd(nf) before decoupling ',ikrd(nf)
+         PRINT*,'Decoupling data from ',crdknd(nf)
+
+         IF (crdknd(nf)(1:4).EQ.'TLMo' .OR.
+     &       crdknd(nf)(1:4).EQ.'ADJo') THEN
+            CALL Bx2d (work(1,1,ikrd(nf+1)),
+     &                 flds2D(1,1,ikrd(nf+1)),ni,nj,1)
+         END IF
+         IF (crdknd(nf)(1:3).NE.'ADJ') THEN
+            CALL Bx2d (work(1,1,ikrd(nf))
+     &                ,flds2D(1,1,ikrd(nf)),ni,nj,1)
+            CALL Kdcplfwd (flds3D,flds2D,work,ikrd(nf),crdknd(nf)
+     &                    ,lvarsi(1,nf),ni,nj,nk,n3Dflds
+     &                    ,n2Dflds,nfiles)
+c Tg and ncr and cvr should not be decoupled; they're not coupled
+
+         ELSE
+            PRINT*,'Decoupling adjoint fields'
+            CALL Kdcpladj (flds3D,flds2D,work,ikrd(nf),crdknd(nf)
+     &                    ,lvarsi(1,nf),ni,nj,nk,n3Dflds
+     &                    ,n2Dflds,nkinds)
+         END IF
+      END IF         !decoupling
+
+c Renormalization
+c Jrain
+      IF ((crdknd(nf)(1:3).EQ.'TLM' .OR. crdknd(nf)(1:3).EQ.'ADJ')
+c Jrain
+     &    .AND. renorm.NE.1.) THEN
+         PRINT*,' '
+         PRINT*,crdknd(nf),' HAS BEEN RENORMALIZED BY ',renorm
+     &         ,' IS THIS DESIRED?'
+         PRINT*,' '
+         DO 155 i=1,nijk
+            flds3D(i,1,ikrd(nf)) = flds3D(i,1,ikrd(nf)) *renorm
+            flds3D(i,2,ikrd(nf)) = flds3D(i,2,ikrd(nf)) *renorm
+            flds3D(i,3,ikrd(nf)) = flds3D(i,3,ikrd(nf)) *renorm
+ 155     END DO
+         IF (lvarsi(1,nf)) THEN
+            DO 158 i=1,nijk
+               flds3D(i,4,ikrd(nf)) = flds3D(i,4,ikrd(nf)) *renorm
+ 158        END DO
+         END IF
+         PRINT*,'finished renorm loop'
+c        pressure
+         flds2D(1:nij,1,ikrd(nf)) = flds2D(1:nij,1,ikrd(nf)) *renorm
+c        ground temp
+         IF (lvarsi(2,nf)) flds2D(1:nij,2,ikrd(nf)) =
+     &            flds2D(1:nij,2,ikrd(nf))*renorm
+         PRINT*,'finished all renorm'
+c        rain
+         IF (lvarsi(3,nf)) THEN
+            PRINT*,crdknd(nf),' rainfall HAS BEEN RENORMALIZED BY '
+     &         ,renorm
+            flds2D(1:nij,3,ikrd(nf))=flds2D(1:nij,3,ikrd(nf))*renorm
+            flds2D(1:nij,4,ikrd(nf))=flds2D(1:nij,4,ikrd(nf))*renorm
+         END IF
+
+c Jrain
+      END IF         !renormalization
+
+      END IF         !not bs
+ 199  END DO
+
+      RETURN
+      END
+
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE RECNRC(ZDAT,KZDT,MZDT,NZDT,FLOW,FHGH,FINC,NSET,NHGH,
+     &   NDSH,SMTH,NMM,LLP,SFS,NCM,SHLOW,SHHIGH,NUSC,USC,LUSC,LZERO,
+     &   SHL1,SLL1,IMAP)
+c kdr
+C
+C  This routine mimics the old CONREC, but has additional arguments
+C  allowing the user to exercise more control over the appearance.
+C  It is a modified CPCNRC which was written by Dave Kennison.  Mod-
+C  ifications to Dave's original code mostly appear after comments
+C  starting with "..".  The first ten arguments are identical to the
+C  old CONREC call.
+C
+C  ZDAT -  array of input data
+C
+C  KZDT -  first dimension of array ZDAT
+C
+C  MZDT -  the number of points to be plotted in the first dimension;
+C     must be less than or equal to KZDAT
+C
+C  NZDT -  the number of points in the second dimension to be plotted.
+C
+C  FLOW -  the lowest contour level to be plotted; if FLOW.ge.FHGH,
+C     the routine will choose the set of contours.
+C
+C  FHGH -  the highest contour level to be plotted.
+C
+C  FINC -  determines how contour levels are chosen in auto mode:
+C     FINC.gt.0.  specifies contour level;
+C     FINC.lt.0.  specifies number of contours = INT(-FINC).
+C
+C  NSET - determine mapping onto plotter frame:
+C     NSET.eq.0  then call SET with standard values;
+C     NSET.lt.0  determine SET using call to GETSET;
+C     NSET.gt.0  no SET called (use when overlaying maps).
+C
+C  NHGH - determine whether highs and lows are to be marked:
+C     NHGH.eq.0  highs and lows are marked, as selected by software,
+C                with labels H and L having subscripted values;
+C     NHGH.eq.-1 highs and lows are marked, as selected by software,
+C                with numbers outlined in boxes;
+C     NHGH.gt.0  every NHGH-th data point is marked with its value
+C     NHGH.lt.-1  neither of the above.
+C
+C  NDSH - ABS(NDSH) is a 10-bit dash pattern, made into a 16 bit dash
+C     pattern by prepending a copy of the low--order six bits:
+C     if NDASH.lt.0 this pattern only used for negative contours;
+C     if NDASH.gt.0 this pattern used for all contours;
+C     if ABS(NDASH).eq. 0, 1, or 1024, all lines are solid.
+C
+C  SMTH - zero for no smoothing; small values (e.g. .001) yield
+C     approximately cubic splines; large values (e.g. 50.) yield
+C     nearly polygonal curves; 2.5 gives results which are identical
+C     to the old CONRECSMOOTH; if negative, smoothing is done on the
+C     raw data (i.e., before the coordinate mapping)
+C
+C  NMM - every IABS(NMM)-th contour is labeled;  values .gt. 0 indicate
+C        that all lines are same thickness; values .lt. 0 indicate that
+C        the labeled lines are thicker (ala old CONREC)
+C
+C  LLP - zero turns off the line labels; one makes line labels in
+C     the old CONREC style; two positions line labels at regular
+C     intervals along the line; three positions line labels using
+C     a penalty scheme which gives better results than either of
+C     the other two options
+C
+C  SFS - the scale factor used in numeric labels; negative values
+C     have special meaning; -2. causes a scale factor to be
+C     chosen in such a way that all numeric labels are integers;
+C     see page 3-119 of the Version 3.00 manual for other useful
+C     settings
+C
+C  NCM - zero turns off the contour message; nonzero turns it on
+C
+C  SHLOW,SHHIGH - these are arrays used for shading:  for no shading,
+C     they can be single values with SHLOW.GE.SHHIGH, otherwise shade
+C     all areas with values less than SHLOW(1) and greater than
+C     SHHIGH(1); if shading is desired, then the arrays must have three
+C     elements each, the second of which is the spot size and the third
+C     of which is the dot spacing: if negative values are indicated,
+C     then defaults are chosen: SLOW(2)=4., SLOW(3)=.004, SHHIGH(2)=2.,
+C     SHHIGH(3)=.002; to select only highs or lows for shading, set the
+C     other value out of range of the values contoured.
+C
+C  NUSC - greater than zero means that the user wants to specify
+C     the contour levels and there will be NUSC of them; these
+C     are arbitrary (possibly irregular)
+C
+C  USC - an array NUSC long containing the user-specified contour levels
+C
+C  LUSC - an integer array NUSC long containing user-specified contour
+C     level use flags; one means draw the line but not the label; three
+C     means draw the line and the label (the line will be thicker than
+C     unlabeled lines if input argument NMM is less than 0)
+C
+C  LZERO - if not equal to 0, then 0 contour are omitted when not using
+C     the user specified contour levels array
+C
+C  SHL1 - label size for high/low values plotted (if .le. 0., then label
+C         size is set to defualt value .018)
+C
+C  SLL1 - label size for contours (if .le. 0, then label size is set to
+C         default value .012)
+C
+c kdr
+C  IMAP - flag for choosing regular/irregular grid mapping in CPMPXY
+C
+
+      DIMENSION ZDAT(KZDT,*),USC(NUSC),LUSC(NUSC),SHLOW(*),SHHIGH(*)
+C
+C Define some needed dimensions.
+C
+      PARAMETER (LAMA=50000,LRWK=5000,LIWK=2000,NCRA=5000,NGRPS=10,
+     &   LOCV=10)
+C
+C Define common block for shading routine SHADAM
+C
+      COMMON /CSHADE/ DOTSZH,DOTSPH,DOTSZL,DOTSPL
+C
+C Define required workspace arrays.
+C
+      DIMENSION RWRK(LRWK),IWRK(LIWK),IAMA(LAMA),XCRA(NCRA),YCRA(NCRA),
+     &   IAIA(NGRPS),IGIA(NGRPS),REC(4),IPAT(8,8)
+C
+C Define a character variable to use for point-value labelling.
+C
+      CHARACTER*(LOCV) CROZ
+      CHARACTER*100 ILTS
+      CHARACTER*40 CMSG
+C
+C  ..Declare the contour-line drawing and shading routines
+C
+      EXTERNAL CPDRPL,SHADAM
+C
+C  ..Dot pattern for shading
+C
+      DATA IPAT/0,1,0,1,0,1,0,1,
+     &          1,0,1,0,1,0,1,0,
+     &          0,1,0,1,0,1,0,1,
+     &          1,0,1,0,1,0,1,0,
+     &          0,1,0,1,0,1,0,1,
+     &          1,0,1,0,1,0,1,0,
+     &          0,1,0,1,0,1,0,1,
+     &          1,0,1,0,1,0,1,0/
+C
+      GMX=-1.E70
+      GMN=1.E70
+      DO 10 J=1,NZDT
+      DO 10 I=1,MZDT
+      IF (ZDAT(I,J).GT.GMX) GMX=ZDAT(I,J)
+   10 IF (ZDAT(I,J).LT.GMN) GMN=ZDAT(I,J)
+      IF (GMX.EQ.GMN) THEN
+         WRITE(CMSG,'(A,1PE20.12)') 'CONSTANT FIELD',GMX
+c kdr         CALL PLCHHQ(CPUX(512),CPUY(512),CMSG(1:34),25.,0.,0.)
+         CALL PLCHHQ(CPUX(512),CPUY(25),CMSG(1:34),25.,0.,0.)
+         RETURN
+      ENDIF
+C
+C  ..Set some internal parameters (to be reset upon exit)
+C
+      CALL GQCLIP(IER,ICLIP,REC)
+      CALL GQLWSC(IER,WLINE)
+      CALL PCGETI('CD',ICPDP)
+      CALL GSCLIP(0)              ! clipping off
+      CALL PCSETI('CD',1)         ! get duplex font
+C
+C  ..Set the tension on the two dimensional smoother
+C
+      CALL CPSETR('T2D',SMTH)
+C
+C  ..Set sizes of high/low and contour labels
+C
+      IF (SHL1.GT.0.) THEN
+         SHL=SHL1
+      ELSE
+         SHL=.018
+      ENDIF
+      IF (SLL1.GT.0.) THEN
+         SLL=SLL1
+      ELSE
+         SLL=.012
+      ENDIF
+C
+C  ..Turn high/low labels on or off
+C
+      CALL CPSETR('HLS - high/low label size',SHL)
+      IF (NHGH.EQ.0) THEN
+         CALL CPSETC('HLT - high/low label text',
+     &      'H:B:$ZDV$:E:''L:B:$ZDV$:E:')
+         call cpseti('HLB - draw box around label ', 0)
+      ELSE IF (NHGH.EQ.-1) THEN
+         CALL CPSETC('HLT - high/low label text','$ZDV$')
+         call CPSETI('HLB - draw box around label ', 1)
+      ELSE
+         CALL CPSETC('HLT - high/low label text',' ')
+      ENDIF
+C
+C  ..Turn line labels on or off
+C
+      CALL CPSETI('LLP - line label positioning',LLP)
+C
+C  ..Turn contour message on or off and position it
+C
+      IF (NCM.EQ.0) THEN
+         CALL CPSETC('ILT - informational label text',' ')
+      ELSE
+c
+c upgrade8
+c kdr If CONPACK does NOT pick the contours, then CIU may have
+c     the wrong value in it; reset it before using it in the info label.
+c
+C         CALL CPSETR('CIU - contour interval used',CINU)
+         CALL CPGETR('CIU - contour interval used',CIU)
+         PRINT*,'Before setting ILT contents CIU = ',CIU
+         CALL CPSETC('ILT - informational label text',
+     &      'CONTOUR FROM $CMN$ TO $CMX$ BY $CIU$ (x$SFU$)')
+         IF (NSET.EQ.0) THEN
+            VPL=.05
+            VPR=.95
+            VPB=.05
+            VPT=.95
+         ELSE
+            CALL GETSET(VPL,VPR,VPB,VPT,WDL,WDR,WDB,WDT,LLF)
+         ENDIF
+         XIL=(.5-VPL)/(VPR-VPL)
+         YIL=(.0146628-VPB)/(VPT-VPB)
+         CALL CPSETR('ILX',XIL)
+         CALL CPSETR('ILY',YIL)
+         CALL CPSETI('ILP',0)
+      ENDIF
+C
+C  ..Set sizes for the various labels
+C
+      CALL CPSETI('LIS - label interval',  IABS(NMM) )
+      CALL CPSETI('LLO - label orientation',  1)
+C
+C  Set some parameters for Rasch-Thompson penalty scheme
+      CALL CPSETR('PC3 - rasch scheme angle chg',120.)
+      CALL CPSETR('PC5 - folding distance      ',0.4)
+      CALL CPSETR('PW1 - weight for gradient   ',0.0)
+      CALL CPSETR('PW3 - weight for dir change ',0.3)
+      CALL CPSETR('PW4 - weight for distance   ',0.5)
+ 
+      CALL CPSETR('LLS - line label size',SLL)
+      IF (LLP.EQ.1) CALL CPSETR('DPS - dash pattern size',SLL)
+c kdr SCM=.012
+      SCM=.02
+      CALL CPSETR('ILS - contour message label size',SCM)
+C
+C  ..Format and scale factor for numeric labels
+C
+      CALL CPSETR('SFS - scale factor selector',SFS)
+C
+C Set up the desired mapping of output onto the plotter frame.
+C
+      IF (NSET.LT.0) THEN
+         CALL CPSETI('SET - do-set-call flag',1)
+         CALL GETSET(XVPL,XVPR,YVPB,YVPT,XWDL,XWDR,YWDB,YWDT,LNLG)
+         CALL CPSETR('VPL - viewport left edge',XVPL)
+         CALL CPSETR('VPR - viewport right edge',XVPR)
+         CALL CPSETR('VPB - viewport bottom edge',YVPB)
+         CALL CPSETR('VPT - viewport top edge',YVPT)
+         CALL CPSETI('VPS - viewport shape',0)
+      ELSEIF (NSET.EQ.0) THEN
+         CALL CPSETI('SET - do-set-call flag',1)
+         CALL CPSETR('VPL - viewport left edge',.05)
+         CALL CPSETR('VPR - viewport right edge',.95)
+         CALL CPSETR('VPB - viewport bottom edge',.05)
+         CALL CPSETR('VPT - viewport top edge',.95)
+         CALL CPSETI('VPS - viewport shape',4)
+      ELSE
+         CALL CPSETI('SET - do-set-call flag',0)
+      ENDIF
+C
+C Decide what dash pattern to use.
+C
+      IDSH=ABS(NDSH)
+      IF (IDSH.EQ.0.OR.IDSH.EQ.1.OR.IDSH.EQ.1023) THEN
+         IDSH=IOR(ISHIFT(32767,1),1)
+      ELSE
+         IDSH=IOR(ISHIFT(IDSH,6),IAND(ISHIFT(IDSH,-4),63))
+      ENDIF
+C
+C  ..Arrange for the selection of contour levels as desired by the user
+C
+      IF (NUSC.GT.0) THEN
+         CALL CPSETI('CLS - contour level selector',0)
+      ELSEIF (FINC.LT.0.) THEN
+         CALL CPSETI('CLS - contour level selector',MAX(1,INT(-FINC)))
+         CALL CPSETR('CIS - contour interval specifier',0.)
+      ELSEIF (FINC.EQ.0.) THEN
+         CALL CPSETI('CLS - contour level selector',16)
+         CALL CPSETR('CIS - contour interval specifier',0.)
+      ELSE
+         CALL CPSETI('CLS - contour level selector',1)
+         CALL CPSETR('CIS - contour interval specifier',FINC)
+         IF (FLOW.LT.FHGH) THEN
+            CALL CPSETR('CMN - contour minimum',FLOW)
+            CALL CPSETR('CMX - contour maximum',FHGH)
+         ENDIF
+      ENDIF
+c kdr set grid mapping choice for use in CPMPXY
+      IF (IMAP.GE.3)  CALL CPSETI ('MAP - MAPPING FUNCTION',IMAP)
+c end kdr
+
+C
+C Initialize CONPACK and give it all array dimensions.
+C
+      CALL CPRECT(ZDAT,KZDT,MZDT,NZDT,RWRK,LRWK,IWRK,LIWK)
+C
+C  ..Pick contour levels
+C
+      IF (NUSC.GT.0) THEN
+         CALL CPSETI('NCL - number of contour levels',NUSC)
+         DO 1 IUSC=1,NUSC
+         CALL CPSETI('PAI - parameter array index',IUSC)
+         CALL CPSETR('CLV - contour level',USC(IUSC))
+         CALL CPSETI('CLU - contour level use flag',LUSC(IUSC))
+         CALL CPSETI('AIA - area identifier above level',0)
+         CALL CPSETI('AIB - area identifier below level',0)
+         CALL CPSETI('CLC - contour line color index',-1)
+         IF (USC(IUSC).LT.0.) THEN
+            CALL CPSETI('CLD - contour line dash pattern',IDSH)
+         ELSE
+            CALL CPSETC('CLD - contour line dash pattern',
+     &         '$$$$$$$$$$$$$$$$')
+         ENDIF
+         CALL CPSETI('CLL - contour line line width',-1)
+         CALL CPSETI('LLC - line label color index',-1)
+    1    CALL CPSETC('LLT - line label text',' ')
+         NCLN=NUSC
+      ELSE
+         CALL CPPKCL(ZDAT,RWRK,IWRK)
+C
+C Retrieve the contour levels selected, one at a time.  Discard levels
+C which are outside the range, if any, specified by the user-supplied
+C values of FLOW and FHGH, and move the parameters for all remaining
+C levels to the beginning of the parameter arrays.  Set dash patterns
+C for all levels.  The value of 'CIU' must be saved for possible
+C restoration if it gets clobbered as a side effect of setting contour
+C level 1.  Zero out the area identifiers.
+C
+         CALL CPGETR('CIU - contour interval used',CINU)
+         CALL CPGETI('NCL - number of contour levels',NCLO)
+         NCLN=0
+         DO 2 ICLO=1,NCLO
+         CALL CPSETI('PAI - parameter array index',ICLO)
+         CALL CPSETI('AIA - area identifier above level',0)
+         CALL CPSETI('AIB - area identifier below level',0)
+         CALL CPGETR('CLV - contour level',CLEV)
+         IF (((FLOW.GE.FHGH).OR.(CLEV.GE.FLOW.AND.CLEV.LE.FHGH)).AND.
+     &      ((LZERO.EQ.0).OR.(ABS(CLEV).GT.1.E-5*CINU))) THEN
+            NCLN=NCLN+1
+            IF (NCLN.NE.ICLO) THEN
+               CALL CPGETI('CLU - contour level use flag',ICLU)
+               CALL CPSETI('PAI - parameter array index',NCLN)
+               CALL CPSETR('CLV - contour level',CLEV)
+               CALL CPSETI('CLU - contour level use flag',ICLU)
+               CALL CPSETI('AIA - area identifier above level',0)
+               CALL CPSETI('AIB - area identifier below level',0)
+               CALL CPSETI('CLC - contour line color index',-1)
+               CALL CPSETC('CLD - contour line dash pattern',
+     &            '$$$$$$$$$$$$$$$$')
+               CALL CPSETI('CLL - contour line line width',-1)
+               CALL CPSETI('LLC - line label color index',-1)
+               CALL CPSETC('LLT - line label text',' ')
+            ENDIF
+         ENDIF
+         IF (NDSH.GT.0.OR.(NDSH.LT.0..AND.CLEV.LT.0.))
+     &      CALL CPSETI('CLD - contour line dash pattern',IDSH)
+    2    CONTINUE
+C
+C  ..Plot a message if no contour levels were within the user's bounds
+C    (added 23Jan91 AWM)
+C
+         IF (NCLN.EQ.0) THEN
+            PRINT'(A)','0RECNRC - no contour levels in specified range'
+            PRINT*,' FLOW=',FLOW,'  FHGH=',FHGH
+            PRINT*,' ZDAT(MIN)=',GMN,'  ZDAT(MAX)=',GMX
+            PRINT*
+            WRITE(CMSG,'(2(A,1PE9.4))') 'MIN:',GMN,'   MAX:',GMX
+c kdr            CALL PLCHHQ(CPUX(512),CPUY(537),CMSG(1:29),20.,0.,0.)
+            CALL PLCHHQ(CPUX(512),CPUY(75),CMSG(1:29),20.,0.,0.)
+            WRITE(CMSG,'(A,2(1P,E9.4))') 'NO CONTOUR LEVELS IN  '
+     &           ,FLOW,FHGH
+c kdr            CALL PLCHHQ(CPUX(512),CPUY(487),CMSG,20.,0.,0.)
+            CALL PLCHHQ(CPUX(512),CPUY(25),CMSG,20.,0.,0.)
+            GOTO 7
+         ENDIF
+C
+C If the number of contour levels decreased, reset parameters affected.
+C
+         IF (NCLN.LT.NCLO) THEN
+            CALL CPSETI('NCL - number of contour levels',NCLN)
+            CALL CPSETR('CIU - contour interval used',CINU)
+         ENDIF
+      ENDIF
+C
+C If requested, put out a simple background.
+C
+      IF (NSET.EQ.0) CALL CPBACK(ZDAT,RWRK,IWRK)
+C
+C  ..Set contour line thickness; make major lines thicker if requested
+C
+      IF (NMM.GT.0) THEN
+         CLW=2.            ! contour line width when all
+         CALL GSLWSC(CLW)  ! lines are the same thickness
+      ELSE
+         DO 3 ICLV=1,NCLN
+         CALL CPSETI('PAI - parameter array index',ICLV)
+         CALL CPGETI('CLU - contour level use flag',ICLU)
+    3    IF (ICLU.EQ.3) CALL CPSETI('CLL - contour-line line width',3)
+      ENDIF
+C
+C Draw the contour lines, masking if necessary.
+C
+c upgrade8
+      call cpgetr('CIU',ciu)
+      call cpgetr('CMN',cmn)
+      call cpgetr('CMX',cmx)
+      call cpgetr('SFU',sfu)
+      PRINT*,'Before drawing min,max,incr,scale = ',cmn,cmx,ciu,sfu
+
+      IF (LLP.LE.1) THEN
+         CALL CPCLDR(ZDAT,RWRK,IWRK)
+      ELSE
+         CALL ARINAM(IAMA,LAMA)
+         CALL CPLBAM(ZDAT,RWRK,IWRK,IAMA)
+         CALL CPCLDM(ZDAT,RWRK,IWRK,IAMA,CPDRPL)
+      ENDIF
+      IF (NMM.GT.0) CALL GSLWSC(1.)
+C
+C Plot labels.
+C
+      CALL CPGETC('ILT - informational label text',ILTS)
+      CALL CPLBDR(ZDAT,RWRK,IWRK)
+C
+C If requested, label every point on the grid.
+C
+      IF (NHGH.GT.0) THEN
+         CALL GETSET(XVPL,XVPR,YVPB,YVPT,XWDL,XWDR,YWDB,YWDT,LNLG)
+         CALL CPGETR('CWM - character width multiplier',CHWM)
+         CALL CPGETR('HLA - high/low label angle',ANGD)
+         CALL CPGETR('HLS - high/low label size',SIZE)
+         CALL CPGETI('MAP - mapping flag',IMAP)
+         CALL CPGETR('ORV - out-of-range value',ORVA)
+         CALL CPGETR('SPV - special value',SPVA)
+         CALL CPGETR('XC1 - x coordinate at i = 1',XCA1)
+         CALL CPGETR('XCM - x coordinate at i = m',XCAM)
+         CALL CPGETR('YC1 - y coordinate at j = 1',YCA1)
+         CALL CPGETR('YCN - y coordinate at j = n',YCAN)
+         SIZE=(XVPR-XVPL)*CHWM*SIZE
+         IF (XCA1.EQ.XCAM) THEN
+            XCA1=1.
+            XCAM=REAL(MZDT)
+         ENDIF
+         IF (YCA1.EQ.YCAN) THEN
+            YCA1=1.
+            YCAN=REAL(NZDT)
+         ENDIF
+         DO 6 J=1,NZDT,NHGH
+         YPOS=YCA1+REAL(J-1)*(YCAN-YCA1)/REAL(NZDT-1)
+         DO 6 I=1,MZDT,NHGH
+         XPOS=XCA1+REAL(I-1)*(XCAM-XCA1)/REAL(MZDT-1)
+         IF (SPVA.EQ.0..OR.ZDAT(I,J).NE.SPVA) THEN
+            CALL CPSETR('ZDV - z data value',ZDAT(I,J))
+            CALL CPGETC('ZDV - z data value',CROZ)
+            DO 4 K=LOCV,2,-1
+            IF (CROZ(K:K).NE.' ') THEN
+               LCRZ=K
+               GOTO 5
+            ENDIF
+    4       CONTINUE
+            LCRZ=1
+    5       IF (IMAP.EQ.0) THEN
+               CALL PLCHHQ(XPOS,YPOS,CROZ(1:LCRZ),SIZE,ANGD,0.)
+            ELSE
+c kdr for IMAP >= 3 CPMPXY must be provided by user
+               CALL CPMPXY(IMAP,XPOS,YPOS,XMPD,YMPD)
+               IF (ORVA.EQ.0..OR.XMPD.NE.ORVA)
+     &            CALL PLCHHQ(XMPD,YMPD,CROZ(1:LCRZ),SIZE,ANGD,0.)
+            ENDIF
+         ENDIF
+    6    CONTINUE
+      ENDIF
+C
+C  do shading if desired
+C
+      IF (SHLOW(1).LT.SHHIGH(1)) THEN
+         DOTSZH=2.
+         DOTSPH=.002
+         IF (SHHIGH(2).GT.0) DOTSZH=SHHIGH(2)
+         IF (SHHIGH(3).GT.0) DOTSPH=SHHIGH(3)
+         DOTSZL=4.
+         DOTSPL=.004
+         IF (SHLOW(2).GT.0) DOTSZL=SHLOW(2)
+         IF (SHLOW(3).GT.0) DOTSPL=SHLOW(3)
+         CALL SFSETP(IPAT)
+         CALL SFSETI('DO - dot fill selector',1)
+         CALL CPSETI('CLS - contour level selection flag',0)
+         CALL CPSETI('NCL - number of contour levels',NCLN+2)
+         CALL CPSETI('PAI - parameter array index',NCLN+1)
+         CALL CPSETI('CLU - contour level use flag',0)
+         CALL CPSETR('CLV - contour level',SHHIGH(1))
+         CALL CPSETI('AIA - area identifier above level',1)
+         CALL CPSETI('AIB - area identifier below level',2)
+         CALL CPSETI('PAI - parameter array index',NCLN+2)
+         CALL CPSETI('CLU - contour level use flag',0)
+         CALL CPSETR('CLV - contour level',SHLOW(1))
+         CALL CPSETI('AIA - area identifier above level',2)
+         CALL CPSETI('AIB - area identifier below level',3)
+         IF (LLP.LE.1) CALL ARINAM(IAMA,LAMA)
+         CALL CPCLAM(ZDAT,RWRK,IWRK,IAMA)
+         CALL ARSCAM(IAMA,XCRA,YCRA,NCRA,IAIA,IGIA,NGRPS,SHADAM)
+      ENDIF
+C
+C  ..Reset internal parameters
+C
+    7 CONTINUE
+      CALL GSLWSC(WLINE)
+      CALL GSCLIP(ICLIP)
+      CALL PCSETI('CD',ICPDP)
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+c      SUBROUTINE CPMPXY(IMAP,XINP,YINP,XOTP,YOPT)
+c
+cc kdr for IMAP >= 3 CPMPXY must be provided by user
+cc I don't remember which program uses IMAP=3.
+c
+c      COMMON /GRIDSZ/ NX,NY
+c      COMMON /CPMPC1/ XFOI(NX),YFOJ(NY)
+c      COMMON /CPMPC2/ XFIJ(NX,NY),YFIJ(NX,NY)
+c
+c      IF (IMAP.EQ.1) THEN
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+
+C
+C
+'EOFD'
+
+cat << 'EOFN' > nmlst.f
+
+ $INITDATA 
+  ;Using namelists:
+  ;> The first column is ignored.
+  ;> comments can appear on their own lines, or can follow variable
+  ;     assigments. In each case the comment must be preceded by a 
+  ;     semicolon
+  ;> Each variable and array name in the namelist must be preceded 
+  ;     by a comma, except for the first, which must not.  
+  ;> Arrays can be filled one element at a time, or elements which
+  ;     are consecutive in memory can be filled by a string of values.
+  ;     The * symbol means repetition of a value, not multiplication
+  ;
+  ;     i.e. a(1)=1., a(2)=1., a(3)=1., a(4)=2.55,  
+  ;     or   a(1)=1.,1.,1.,2.55
+  ;     or   a(1)=3*1.,2.55
+  ;     or   a   =3*1.,2.55
+  ;     all accomplish the same thing
+  ;
+  ;---------------------------------------------------------------
+  ;DATA FILE NAMES
+  ;---------------------------------------------------------------
+
+  ;If there are two of the same kind of file; two nonlinear, two 
+  ;   tangent linear, etc. be sure to put the filename of the perturbed 
+  ;   first, and the filename of the control second.
+  ;cMSnams(nfiles,tapes)   nfiles = the number of "file"s to be read in
+  ;                        tapes = the number of tapes required to hold
+  ;                                all the data on a given "file"
+  ;Only the elements of cMSnams to be used need be filled here,
+  ;the rest will be filled with blank characters by the routine.
+  ;So, if we process a TLM file which occupies one tape and an
+  ;NLM file which occupies two tapes, then
+  ;     cMSnams(1,1)= '/RAEDER/NONLIN/EXAMPLE/NLMD1'
+  ;                  ,'/RAEDER/LINEAR/EXAMPLE/NLMD1'        
+  ;    ,cMSnams(1,2)= '/RAEDER/NONLIN/EXAMPLE/NLMD2'
+    
+  cMSnams(1,1)= 
+     '/RAEDER/MAMS/DRI/DUST/1108013/4DYINP/NLMD1'
+  ;  '/RAEDER/MAMS/SUM2/H24-36/2M/NLM/IS7v-1/IC1/p+1/NLMD1'
+  ; ,'/RAEDER/NONLIN/SUM2/4354/20/BS2M/NLMD1'
+  ;  '/RAEDER/MAMS/EXPL4/H60-72/2M/NLM/IS7v-1/IC1/p+1/NLMD1'
+  ; ,'/RAEDER/NONLIN/EXPL4/6190/20/BS2M/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/W4MM12-24/NLM/IS1v-1/IC1/p+1/NLMD1'
+  ; ,'/RAEDER/MAMS/Jrain/W4MM24/Fixras/BS/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/S3MM12-24/NLM/IS7v-1/IC1/p+1/NLMD1'
+  ; ,'/RAEDER/MAMS/Jrain/S3MM24/Fixras/BS/NLMD1'
+  ;   '/RAEDER/MAMS/Jrain/S3MM12-24/TLM/IS1v-1/IC1/NOSCALE/NLMD1'
+  ;  ,'   '
+  ;,  '/RAEDER/MAMS/SUM2/H24-36/2M/TLM/IS7v-2/IC1/NOSCALE/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/W4MM12-24/TLM/IS7r-1/IC1/NOSCALE/NLMD1'
+  ;  '/RAEDER/NONLIN/EXPL4/6190/20/TLM/SV1x1/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/S3MM12-24/NLM/IS1v-1/IC2/p-1/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/S3MM24/Fixras/BSNR/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/W3MM24/Fixras/BSNR/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/W4MM12-24/NLM/IS7v-2/IC1/p-2/NLMD1'
+  ; ,'/RAEDER/MAMS/Jrain/W4MM12-24/NLM/NOP2/NLMD1'
+  ; ,'/RAEDER/MAMS/SUM2/H24-36/2M/NLM/NOP/NLMD1'
+  ; ,'/RAEDER/MAMS/SUM2/H24-36/2M/TLM/IS7v-2/IC1/NOSCALE/NLMD1'
+  ; ,'   '
+  ;   '/RAEDER/MAMS/Jrain/S3MM12-24/TLM/IS1v-1/IC2/NOSCALE/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/S3MM12-24/NLM/IS7v-1/IC1/p-2/NLMD1'
+  ; 
+  ; ,'   '
+  ; ,'/RAEDER/MAMS/Jrain/S3MM12-24/TLM/IS7v-1/IC1/NOSCALE/NLMD1'
+  ;  '/RAEDER/NONLIN/SUM2/4354/20/BS2M/SEPRAIN/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/W4MM12-24/TLM/IS7v-2/IC1/NOSCALE/NLMD1'
+  ; ,'   '
+  ;  '/RAEDER/MAMS/EXPL4/H60-72/2M/TLM/IS7v-2/IC1/NOSCALE/NLMD1'
+  ;       '/RAEDER/MAMS/Jrain/Fixras/W4V2MM/NLMD1'
+  ;       '/RAEDER/MAMS/Jrain/Fixras/W4NRMM/NLMD1'
+  ;  '/RAEDER/MAMS/Jrain/W3MM24/Fixras/VOT1/H-6/TLM/NLMD1'
+  ;  '/RAEDER/NONLIN/EXPL4/6190/20/BS2M/H48-72/NLMD1'
+  ;      '/RAEDER/MAMS/Jrain/S3MM24/Fixras/NOPc/NLMD1'
+  ;      '/RAEDER/MAMS/Jrain/S2MM24/Fixras/NOP/NLMD1'
+  ;      '/RAEDER/MAMS/Jrain/S3MM6c/Fixras/NOP/NLMD1'
+  ;      '/RAEDER/MAMS/Jrain/S3MM6c/Fixras/CROQ1/NLMD1'
+  ;     ,'/RAEDER/MAMS/Jrain/S3MM6c/Fixras/NOP/NLMD1'
+  ;        '/RAEDER/CONV/JACPAR/W3/TLM/RANDIC/CFe/NLMD1'
+  ;       ,'   '
+  ;       ,'/RAEDER/CONV/JACPAR/W3/TLM/RANDIC/CFfull/NLMD1'
+  ;       ,'   '
+  ;       ,'/RAEDER/CONV/JACPAR/W3/TLM/RANDIC/FULLCF/NLMD1'
+  ;       '/RAEDER/MAMS/Jrain/W3MM24/Fixras/NOPc/NLMD1'
+  ;       '/RAEDER/MAMS/Jrain/W4MM24/Fixras/V2OQ1/NLMD1'
+  ;      ,'/RAEDER/MAMS/Jrain/W4MM24/Fixras/V2NOP/NLMD1'
+  ;      ,'/RAEDER/MAMS/Jrain/W4MM24/Fixras/CROQ1c/TLM/NLMD1'
+  ;      ,'   '
+  ;      '/RAEDER/MAMS/Jrain/W4MM24/Fixras/VOQ1/NLMD1'
+  ;      ,'/RAEDER/MAMS/Jrain/W4MM24/Fixras/NOP/NLMD1'
+  ;       '/RAEDER/MAMS/Jrain/W4DD24/Fixras/NOP/NLMD1'
+  ;      ,'/RAEDER/MAMS/Jrain/S3MM24/BSb/NLMD1'
+  ;      ,'/RAEDER/MAMS/CONVLOW/507020/ANAL/NLMD1'
+  ;      ,'/RAEDER/MAMS/Jrain/W3MM24/BS/NLMD1'
+  ;        '/RAEDER/NONLIN/EXPLOS/656510/H48/BS/MST/NLMD1'
+  ;        '/RAEDER/MAMS/RGF/ADVH24F/NLMD1'
+  ;              ,'  '
+  ; cMSnams(1,1)= '/RAEDER/MAMS/RGF/AC3H24F/NLMD1'
+  ; cMSnams(1,1)= '/RAEDER/MAMS/RGF/AW1T24F/NLMD1'
+  ;       '/RAEDER/NONLIN/TECHTEST/0213/H0-24/BS/MST/NLMD1'
+  ;       '/RMERRICO/JACOBIAN/S1/NLM/PMFILTONLY/NLMD1'
+  ;     '/RMERRICO/SV/SPECTS/EXPLOS/DRYTLM/DRYE/SV219/NLMD1'
+  ;       '/RAEDER/MAMS/GULF/BS/NLM/NLMD1'
+  ;      ,'/RAEDER/MAMS/GULF/W1QF/ADJ/WKLYSST/NLMD1'
+  ;      '/RAEDER/MAMS/GULF/50KM/67x86/5DYINP2/NLMD1'
+
+  ; ,cMSnams(1,2)='/RAEDER/GULFMEX/7810414/NONLIN/NOIN/NLMD2'
+
+  ;----------------------------------------------------------
+  ; KINDS AND FIELDS OF DATA TO BE USED
+  ;----------------------------------------------------------
+  ;   The structure of several loops requires that the user fill the
+  ;   ckinds array (and other character arrays) in the same order 
+  ;   in which they appear in the callknds array:
+  ;   callknds /'NLMop','NLMin','NLMoc'
+  ;            ,'TLMo1','TLMb1','TLMo2','TLMb2
+  ;            ,'ADJo1','ADJb1','ADJo2','ADJb2
+  ;            ,'TLMer','fdiff' /,
+
+         ; ckinds contains the character names of all the nkinds 
+         ; to be used:
+         ; WARNING; TLM and ADJ kinds cannot be used 
+         ;          if lz or lslp are .T
+   ,ckinds='NLMoc'
+               ;'NLMop',,'TLMo1','TLMb1''TLMo2','TLMb2','TLMer','fdiff'
+               ;'ADJo1','ADJb1','ADJo2','ADJb2'
+
+         ;crdknd contains the character names of the kinds to be read in
+   ,crdknd='NLMoc'
+                 ;'NLMop', 'TLMo1','TLMb1','TLMo2','TLMb2'    
+                 ;   'ADJo1','ADJb1','ADJo2','ADJb2' 
+  ; ,ctmknd= 'NLMoc'   ;the kind whose times will be used on the plots
+                     ;(default is crdknd(1))
+
+
+          ;The following arrays are filled with the character names 
+          ;of the kinds to be used to calculate the following fields.
+   ,czknd=  'NLMoc'   ;geopotential heights 
+                            ;(only NLMxx and XXXb# are allowed)
+   ,cslknd=  'NLMoc'   ;sea-level pressure
+                             ; if lslp and lz = T 
+                             ;then cslknd must = czknd,'NLMoc'
+  ; ,cvdknd='NLMop'     ;'TLMo1','TLMb1','TLMo2','TLMb2'   
+                       ;,vorticity and/or divergence
+
+  ;Logical variables which control various calculations 
+  ;-----------------------------------------------------
+  ; ,ldostt =  .F  ;flag for calculating any statistics,  deflt=.T     
+  ; ,lprflds = .T  ;switch to print out some extra information (deflt=F)
+  ;Compute statistics for the following fields, (deflt=.F)
+  ; ,lTg= .T            ;compute statistics for Tg        
+  ; ,lq = .T            ;compute statistics for moisture, 
+  ; ,lrf = .T           ;compute statistics for rainfall, 
+  ;Compute the following fields, and statistics for them (deflt=.F)
+   ,lz  = .T           ;geopotential heights 
+   ,lslp= .T           ;sea level pressures 
+  ; ,ldiv = .T          ;divergence of some fields 
+  ; ,lvort = .T         ;vorticity of some fields 
+  ; ,lother = .T        ;user provided field 
+
+  ;statistics can be calculated for a subdomain through the STATSUB
+  ;namelist (below)
+
+  ;DIFFERENCE CALCULATIONS
+  ;------------------------
+    ,ldff=.F  ,ltlmerr= .F         ;switches for taking differences
+         ;.T.= do take difference,
+         ;ldff takes the difference of the two 
+         ;  kinds found in cdfknd(1 and 2) (below)
+         ;ltlmerr takes the diff between cdfknd(3 ;and 4)
+         ;  Usually these two are the TLM field read in  and
+         ;  the result of ldff, i.e 'TLMo1' and 'fdiff')
+  ; ,cdfknd(1)='NLMop'        ;first minus second -> check cMSnams too
+  ; ,cdfknd(2)='NLMoc'        ;first minus second -> check cMSnams too
+  ; ,cdfknd(3)= 'TLMo1'   ;could also use TLMo2, but not likely
+  ; ,cdfknd(4)= 'fdiff'   ;don't change without thoroughly understanding
+                          ;the processor
+
+  ;CORRELATION OR COVARIANCE CALCULATIONS
+  ;---------------------------------------
+  ; ,cccknd='TLMo1','fdiff' ;kinds input to the horizontal correlation
+  ; ,cccknd='NLMop','NLMoc' ;kinds input to the horizontal correlation
+                            ; (or covariance) subroutine (Kcorcov)  
+                            ;Output goes to the statistics file
+   ,ccswtch = 1.   ;whether Kcorcov calculates the correlation(1.)
+                  ;of the two kinds, or the covariance(2.)
+                  ;ldostt must be set to T to use this
+  ; ,thresh=        ;threshhold for including a point in the corcov
+                    ; calculation - if the value is too small that 
+                    ; point is ignored  (default is 0)
+
+  ;MISCELLANEOUS CALCULATIONS
+  ;---------------------------
+  ; ,lchngJ = .T        ;switch to calculate the change in a forecast
+                      ; aspect using a KchngJ (with user supplied
+                      ; contents
+  ; ,ldecup =  .F       ;flag for decoupling,             deflt=.T     
+
+  ; ,renorm = -3.693371550305202E-2    ;S3IS1V-1N2p+|-1
+  ; ,renorm = -7.386743100610404E-2    ;S3IS1V-1N2p+|-2
+  ; ,renorm = -3.332668685164019E-2    ;S3IS7V-1N1p+|-2
+  ; ,renorm = 1.410052574710946E-2    ;S2IS1V-1N1p+|-1
+  ; ,renorm = 2.820105149421892E-2    ;S2IS1V-1N1p+|-2
+  ; ,renorm = 1.346681251892117E-2    ;S2IS7V-1N1p+|-2
+  ; ,renorm = -2.537163993636548E-2    ;S2IS7V-2N1p+|-2
+  ; ,renorm = -3.882618759475198E-2    ;S3IS7V-2N1p+|-2
+  ; ,renorm = +3.332668685164019E-2    ;S3IS7V-1N1p+|-2
+  ; ,renorm = -3.520863629038006E-2    ;W4IS7V-1N1p+|-2
+  ; ,renorm = -2.307547523666553E-2    ;W4IS7V-2N1p+|-2
+  ; ,renorm = 14400.   ; dt=1 min Jrain cases and convert cm to kg/m^2 (x10)
+             ;renormalization of linear fields deflt=1.
+             ;TLM and ADJ fields will be mutliplied by this number
+
+  ;------------------------------------------------------------------
+  ;TIME REPETITION VARIABLES
+  ;-----------------------------
+
+  ,itreps=  1*1 ;The number of array elements should equal the number
+                 ;    of times (ntimes) to be processed.
+                 ;The value of each element gives the number of 
+                 ;   repetitions that time slot will be processed
+                 ;itreps >0 -> graph the data for that set of
+                 ;    times itreps different ways 
+                 ;If itreps for a given timeslot is >or= 2 , 
+                 ;    then the graphing parameters for each way must be 
+                 ;    set in separate GRFDATA namelist(s) below
+  ;------------------------------------------------------------------
+  ; GRAPHICS VARIABLES
+  ;------------------------------------------------------------------
+
+  ;The character names of the default kinds to be graphed.
+  ;They must be specified - there are no defaults provided
+
+   ,cgrkndD= 'NLMoc'
+                             ;'NLMop','TLMo1','TLMb1','TLMo2',
+                             ;,,'ADJo1','ADJo2''fdiff'
+
+           
+  ; ,cdescrD = ' forecast'  
+           ;a part of the descriptive 
+           ;header for each cgrkndD element (max 20 characters)
+
+  ; ,lbighd = .F    ;switch for plotting big header on plots (def=T)
+
+   ,ccase = 'Dust Storm          '  ;case label in (optional) large 
+  ; ,ccase = 'Qsens rains ratio   '  ;case label in (optional) large 
+  ; ,ccase = 'Jacpar filter jac   '  ;case label in (optional) large 
+                             ;info header
+                             ;max 20 characters
+  ; ,cJn = 'Vo','Rn' ; the subscript of the J (forecast aspect) used in 
+             ; the adjoint.  If two different Js are plotted, two
+             ; subscripts can be put in the array Jn.
+
+  ; ,cgrids='  PLOT'      ;'  PLOT' to overide default NOPLOT
+                          ;for plotting of dot and cross grids
+                          ; with lat lon lines
+  ; ,ICOUNT=              ; <1 means don't include ICOUNT on graphs 
+                          ; and don't iterate it (ICOUNT keeps track of
+                          ; the frame number)
+  ; ,ldomapD= .F          ;flag to draw map background (deflt=.T)
+  ;,ID=1              ;partially controls how SUPMAP (the map 
+                        ;superposition subroutine) is called
+                        ;0 MSUPMP not called; perim plotted
+                        ;1 MSUPMP called, perim and latlon lines plotted
+                        ;2 MSUPMP called, perim lines plotted (default)
+    ;state outlines can be had through a parameter hardwired
+   ,IOUT = 4            ;SUPMAP control of continent/country/state 
+                        ;outlines
+                        ;<=-2 -> no outlines
+                        ;  -1 -> cont. & state
+                        ;   0 -> continental
+                        ;   1 -> cont. & state
+                        ;   2 -> continental 
+                        ;   3 -> state
+                        ;   4 -> cont. + internat. + state
+                        ;>= 5 -> cont. + internat. 
+   ,LWcontD = 1000              ; line width of the contours 
+   ,LWmapD = 700              ; line width of the map background
+                          ; 1000 is what RECNRC would give
+
+  ;-------------------------------
+  ;This subsection determines which of the nk levels will be graphed 
+  ;and what contour intervals will be used 
+  ;   If the value for a level in XgraphD (X=u,v,T,...) equals the 
+  ;      value in fnul (default 0.). then RECNRC will not graph a 
+  ;      horizontal map of that level 
+  ;   negative "value"s mean RECNRC will graph ABS("value") contours, 
+  ;      with a contour interval of it's choosing.
+  ;   positive "value"s mean RECNRC will graph a number (of its choice)
+  ;      of contours, with contour interval "value"
+  ;For more control over the contour levels use the xUSC arrays, below.
+  ;u,v,T,ps are graphed by default. All others are not graphed by def.
+
+  ;3D FIELDS
+  ;-----------
+   ,ugraphD=10*0. ,3*-10.
+   ,vgraphD=10*0. ,3*-10.
+   ,TgraphD=13*0.              ;,-10.,4*0.
+  ; ,qgraphD=15*0. ,-10.,4*0.
+   ,zgraphD= 3*6.,10*0. ;zgraph is filled differently than other Xgraph:
+                         ;the contour information corresponds,
+                         ;element for element, with the elements of
+                         ;zplvlsD (don't worry about sigma levels)
+                         ;(default = 0.)
+   ,zplvlsD= 250.,500.,850.,10*0. ;the pressure levels of the desired  
+                        ;geop hghts, in hPa (default = 500.)
+  ; ,dvgraphD= 9*0.,-10.,4*0.,-10.,4*0.,-10.
+      ;divergence
+  ; ,vtgraphD= 4.E-5       ;9*0.,-10.,4*0.,-10.,4*0.,-10.
+      ;vorticity
+  ; ,otgraphD= 2.E-5,19*0.
+
+                       ;user must introduce code for calculating it
+                       ; into the main routine
+  ;2D FIELDS
+  ;-----------
+   ,psgraphD=  0.
+  ; ,TggraphD=   -10.         ;ground temp
+  ; ,RncgraphD=   -10.       ;rainfall
+  ; ,RcvgraphD=   -10.       ;rainfall convective
+   ,slpgraphD=  4.        ;sea level pressure (hPa) (default=0.)
+
+  ;GRAPHING SUBDOMAIN
+  ;------------------
+  ; ,i1grfD=26   ,j1grfD= 1  ;Default(user set) and particular graphing
+  ; ,nigrfD= 25   ,njgrfD= 35  ;subdomain  (i and j may be reversed)
+ 
+  ;MISCELLANEOUS GRAPHING PARAMETERS
+  ;---------------------------------
+  ;NSDxxx is the number of Signif. Digits displayed on contours 
+  ; <0 -> ABS(NSD) digits displayed
+  ; >0 -> #common digits +ABS(NSD) digits displayed
+  ; ,NSDvel = -2             ; velocity (u,v)          (deflt=-2)
+  ; ,NSDtmp = -3             ; temperature (T,Tg)      (deflt=-3)
+  ; ,NSDprs = -3             ; pressure  (ps,slp)      (deflt=-4) 
+  ; ,NSDmst = -2             ; moisture  (q)           (deflt=-2)
+  ; ,NSDrnf = -2             ; rainfall  (Rnc,Rcv)       (deflt=-2) 
+  ; ,NSDzht = -3             ; geopotential height (z) (deflt=-3)
+  ; ,NSDoth = -3             ; other kind of field (?) (deflt=-3)
+
+  ; ,FLOWD = -4.            ;lowest contour, dflt=FHGHD=0,
+                            ; ->RECNRC chooses
+  ; ,FHGHD = 280.           ;highest contour (default = FLOWD) 
+  ; ,NSETD =                ;mapping onto plotter frame 
+                            ;>0 = no SET call (use with map overlays)
+                            ;     (default)
+                            ;=0 = call SET with standard values
+                            ;<0 = call SET with values from GETSET
+  ; ,NHGHD = -2             ;highs and lows marked? 
+                            ;dflt=0=H&L w/subscr
+                            ;-1-> numbers with boxes
+                            ;-2-> not marked
+  ; ,NDSHD = 877             ;dash pattern of contours, dflt=-341
+                            ;(>0 = all contours, <0 = neg conts )
+  ; ,SMTHD =                ;smoothing (dflt = 0.)  
+  ; ,NMMD = 3                 ;every NMMDth contour labeled,(dflt=2)
+                            ;<0 labeled lines thicker, >0 not
+  ; ,LLPD =0                  ;line label positioning, dflt=1 (RECNRC)
+                            ;0-> no line labels    2-> spaced regularly 
+                            ; 3-> Rasch scheme (better than 1 and 2)
+  ; ,SFSD =                 ;line label scale factor, dflt=-2.(integers)
+                            ;  used by "CONTOURS FROM __ TO __ BY __ ()"
+  ; ,NCMD = 0               ;0= no contour message, dflt=1
+  ; ,SHLOWD =0.,2.,.002     ;shading (1 or 3 elements) deflt=no shading
+                            ;recommend shading pattern: 2.,.002 
+  ; ,SHHIGHD =250.,10.,.002 ;shading (1 or 3 elements)
+                            ;recommend:,2.,.002 
+  ; ,NUSCD =                ;number of user set contours, dflt=0
+  ; ,USCD =                 ;user set contours, dflt=NUSCD*0.
+  ; ,LUSCD =                ;contour label information, dflt=NUSCD*0
+  ; ,LZEROD =0               ;=0 means include 0 contour, dflt=1
+  ; ,SHL1D =.01                ;HI/LOW label size, dflt=-1. -> .018
+  ; ,SLL1D =.01                ;contour label size, dflt=-1. -> .012
+
+ $END   
+
+  ; X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+
+ $STATSUB 
+  ; This namelist allows the user to specify the subdomain which
+  ; will be used for calculating the statistices.  The default is
+  ; the (sub)domain which is graphed
+  ; The edge of the defined domain is not included in the stats
+  ; nistat and njstat must be at least 3
+  ; i1stat = 26
+  ; ,j1stat = 1
+  ; ,nistat =25
+  ; ,njstat =35
+ $END
+
+  ; X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+
+ $TIMES
+  ;The ntimes times on the nfiles files with which we want to work
+  ;for this set of itreps
+  ;There should be only 1 $TIMES namelist for each of the ntimes,
+  ;and it should precede the $GRFDATA namelists for that ntime
+  ; DON'T FORGET: adjoint times are negative
+
+   timsin(1) = 0.  
+  ; timsin(1) = 2*12.  ;E4, S2
+  ; timsin(1) = 12.,24.  ;W4, S3
+
+ $END
+
+
+ $GRFDATA             
+  ; fdiff    Rnc at specified levels
+  ;When a given time should be displayed in several different ways,
+  ;or in a way which differs from the default settings, then this
+  ;namelist can be used to do it.  First itreps must be set to an
+  ;appropriate value in namelist $INITDATA, then the desired graphing
+  ;parameters should be set in this namelist.
+  ;A separate GRFDATA namelist is required for each itrep 
+  ;of a given time.  The parameter values which are changed here are 
+  ;always reset to the default values after each repetition, 
+
+  ; cgrknd= 'NLMoc'                    ;'fdiff'  . . . 'NLMop',
+  ; cdescr = ' foofles'
+  ; cgrknd= 'TLMo1','TLMo2'                    ; kinds to be graphed
+    
+  ; zgraph= 5*0.   ;different from vgraphD above,
+                          ;but same function.
+                          ;for more control over contours
+                          ;use xUSC below
+  ;  ugraph=18*0.,-10.,0.
+  ; ,vgraph=17*0.,-10.,2*0.
+  ; ,Tgraph=17*0.,-10.,2*0.
+  ; ,qgraph=19*0.,-10.
+  ; ,otgraph=20*0.
+  ; ,slpgraph= 0. ;different from vgraphD above,
+  ; ,Tggraph=0.
+  ; vtgraph= 18*0.,4.E-5,0.
+  ; ,dvgraph= 20*0.
+  ; ,psgraph=   0.       ;rainfall
+  ; ,Rncgraph=   0.       ;rainfall
+  ; ,Rcvgraph=   0.       ;rainfall convective
+
+  ; WARNING; do not fill zplvls in GRFDATA
+  ;          only fill   zplvslD in INITDATA
+  
+  ; The corner labels to appear on the graphs produced for this set
+  ; of times.  The default is ' '.
+  ; Be sure that the fields and elements assigned here correspond with
+  ; the Xgraph assignments above
+
+  ; ,cvtclbl = 18*' ','d',' '
+  ;  cuclbl= 3*' ','a',6*' '         ;u velocity
+  ; ,cvclbl= 4*' ','a',5*' '        ;v velocity
+  ; ,cTclbl= 3*' ','b',6*' '        ;Temperature
+  ; ,cqclbl         ;moisture
+  ; ,cpsclbl            ;p*
+  ; ,cTgclbl            ;ground Temperature
+  ; ,cRncclbl = 'b'           ;rainfall (nonconvective)
+  ; ,cRcvclbl           ;rainfall (convective)
+  ;  czclbl = 'b',9*' '        ;geopotential height
+  ; ,cslclbl= 'a'           ;sea level pressure
+
+  ; ,ldomap= .F.                 flag to draw map background
+  ; The following parameter will apply to ALL the cgrknd s and variables
+  ;    listed above.  
+       
+  ;   graphing parameters
+  ;      map background
+  ;      RECNRC options
+  ;         shading parameters
+  ;      figure titles
+  ;      subregion
+             
+        ;Graphing variables
+
+  ; ,FLOW= ,                ;lowest contour (default = FHGHD = 0, which 
+                            ;means that CONREC chooses)
+  ; ,FHGH= ,                ;highest contour (default = FLOWD)
+  ; ,NSET= ,                ;mapping onto plotter frame (default=1)
+  ; ,NHGH= ,
+  ; ,NDSH= ,
+  ; ,SMTH= , 
+  ; ,NMM= ,
+  ; ,LLP= ,
+  ; ,SFS= ,
+  ; ,NCM= ,
+  ; ,SHLOW= ,                ;(1[2,3])
+  ; ,SHHIGH= ,                ;(1[2,3])
+  ; ,NUSC= 11
+  ; ,USC= .00001,.2,.4,.6,.8,1.0,1.5,2.0,2.5,3.0,3.5   ;(1:NUSC)
+  ; ,LUSC= ,                ;(1:NUSC)
+  ; ,LZERO= ,
+  ; ,SHL1= ,
+
+ $END
+
+ ;$GRFDATA             
+  ; cgrknd= 'NLMop','NLMoc'
+  ; ,qgraph=20*0.
+  ; zgraph=20*0.
+  ; ,Tggraph=0.
+  ; ,psgraph=0.
+  ; ,Rncgraph =   -10.       ;rainfall
+  ;  Rcvgraph =   20.       ;rainfall convective
+  ; ,cRcvclbl = 'd'           ;rainfall (nonconvective)
+  ; ,NUSC= 11
+  ; ,USC= .00001,.2,.6,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5   ;(1:NUSC)
+  ; ,LUSC= ,                ;(1:NUSC)
+ ;$END
+
+ ;$GRFDATA             
+  ; vtgraph= 18*0.,-10.,0.    ;,-10.,0.,-10.,0.,-10.,0.,-10.,0.,-10.
+  ;,cvtclbl= 18*' ','b',' '
+  ; Rncgraph =   20.       ;rainfall convective
+  ;,cRncclbl= 'd'
+ ;$END
+ ; x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x
+
+ $TIMES
+  ;The nfiles times on the nfiles files with which we want to work
+  ;for this set of itreps
+  ;There should be only 1 $TIMES namelist for each of the ntimes,
+  ;and it should precede the $GRFDATA namelists for that ntime
+  ; DON'T FORGET: adjoint times are negative
+
+  timsin =  4*12.    
+                      ;23.983333 (rates comptd in nlm now; don't do here
+                      ;the second time for each file
+
+ $END
+
+ $GRFDATA             
+  ;  cgrknd= '     '                   ;'fdiff'  . . . 'NLMop',
+  ;  ugraph= 3*0.,-10.,16*0.   ;different from vgraphD above,
+  ; ,vgraph= 3*0.,-10.,16*0.   ;different from vgraphD above,
+  ; ,Tgraph= 18*0.,-10.,0.   ;different from vgraphD above,
+  ; ,qgraph= 19*0.,-10.   ;different from vgraphD above,
+  ; ,cuclbl = 5*' ','a',4*' '        ;geopotential height
+  ;  Rncgraph = 0.       ;rainfall
+  ; ,Rcvgraph = 0.       ;rainfall convective
+  ; ,otgraph= 0.,-10.,18*0.   ;different from vgraphD above,
+  ; ,cotclbl= 'b',9*' '           ;sea level pressure
+ $END
+ $GRFDATA             
+  ; cgrknd= 'NLMop','NLMoc'
+    ugraph= 20*0.
+   ,vgraph= 20*0.
+   ,Tgraph= 20*0.
+   ,qgraph= 20*0.
+   ,psgraph=0.
+  ; ,Tggraph=0.
+   ,Rncgraph =   -14.       ;rainfall
+   ,Rcvgraph =   -14.       ;rainfall convective
+   ,NUSC= 14
+   ,USC=-.01,-.00316 ,-.001 ,-.000316 ,-.0001 ,-.0000316 ,-.00001,
+         .00001,.0000316,.0001,.000316,.001,.00316,.01
+
+
+   ,LUSC= 14*1                ;(1:NUSC)
+  ; ,slpgraph=-10.
+  ;  vgraph=13*0.
+  ; ,otgraph=13*0.
+  $END
+
+  ; X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+
+ $TIMES
+  timsin = 2*2.    ;the third time for each file
+ $END
+
+ $GRFDATA             
+  ; NLMop,NLMoc,fdiff T and q at levels above
+ $END
+
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 2*4.    ;the third time for each file
+ $END
+ $GRFDATA             
+ $END
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 2*6.    ;the fourth time for each file
+ $END
+ $GRFDATA             
+  ; ugraph=7*0.,6*2.
+  ; ,qgraph=7*0.,6*.001
+  ;,otgraph=7*0.,6*.02
+ $END
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 2*-18.    ;the fifth time for each file
+ $END
+ $GRFDATA             
+ $END
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 2*-24.    ;the sixth time for each file
+ $END
+ $GRFDATA             
+ $END
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 2*-36.    ;the seventh time for each file
+ $END
+ $GRFDATA             
+ $END
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 2*-48.    ;the eighth time for each file
+ $END
+ $GRFDATA             
+ $END
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 108.    ;the ninth time for each file
+ $END
+ $GRFDATA             
+ $END
+  ; x x x x x  x x x x x  x x x x x  x x x x x  x x x x x  x x x x x 
+ $TIMES
+  timsin = 120.    ;the ninth time for each file
+ $END
+ $GRFDATA             
+ $END
+
+'EOFN'
+
+# acquire /RAEDER/LINEAR/EXPL/TEST/PSTEN/ITERS 14 psten
+# acquire /RAEDER/GULFMEX/375213/LINEAR/Js1/TOPOGA 0 topog
+
+assign -a input.info   fort.10
+assign -a nmlst.f    -f77  fort.11
+assign -a stats        fort.12
+assign -a corrs        fort.13
+assign -a profs        fort.17
+ 
+f90raed progd.f llu "-e i -r l"  MAMS2B1,GR08,K2,ncarm,ncaro exec
+ 
+if ($status == 0) then
+   rcp gmeta ${MACHINE}:${DATA}/${outname}.cgm
+   rcp stats   ${MACHINE}:${DATA}/${outname}.stat
+#   dispose stats /RAEDER/NONLIN/87121500/TESTSTT   nocopy \
+#           3 stats4input_to_mm46
+   if ($CORNAME != none) then
+      dispose corrs ${CORNAME}  copy  365 total_field_corrs_FofT
+   endif
+endif
+
+# dispose adjpatt /RAEDER/LINEAR/ALP/0311/NOALPS/ADJPATT copy 365 \
+#      adj_uvT_Hneg24
+
+
+
+
+
+# This has the wrong stuff in it now!  I overwrote it11/17/00 with
+# Jrain stuff
+
+# dispose profs /RAEDER/NRL/FLUX/EIGEN/PROFS/MW500a copy 365 \
+#      cpld_psTguvTq_1timeslot_500profs
+ 
+# other information about the run; output from PRINT statements
+rcp progd.out ${MACHINE}:${DATA}/${outname}.diag
+#
+rsh ${MACHINE} beep
+ja -clst
+#
+ls -a
+cp log ${HOME}/proc.log
+rcp log ${MACHINE}:${DATA}/${outname}.log
+'JOBEND'

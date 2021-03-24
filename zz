@@ -1,0 +1,104 @@
+2c2
+< Date: Fri, 14 May 1999 11:40:16 -0600 (MDT)
+---
+> Date: Fri, 14 May 1999 11:40:31 -0600 (MDT)
+8,10c8,11
+< #********************************************************************
+< #  script to do similarity index for two E-norm SV sets in the E-norm
+< #********************************************************************
+---
+> #***************************************************************
+> #  script to do similarity index for 
+> #  one E-norm SV (set A) and one R-norm SV (set B) in the E-norm
+> #***************************************************************
+32c33
+< set cgdname = 'spc1vs2'
+---
+> set cgdname = 'spc1vs3_er'
+58,60c59,61
+< 	parameter (n=79354,ma=20,mb=20)    ! n dimension of vectors, m number of SVs
+< 	parameter (na=79354,nb=79354)      ! the actual dimensions (moisture) 
+< 	parameter (nap2=na+2,nbp2=nb+2)
+---
+> 	parameter (n=79354,ma=20,mb=20)     ! n dimension of vectors, m number of SVs
+> 	parameter (na=79354,na1=104294,nb=104294)  ! the actual dimensions (moisture) 
+> 	parameter (nap2=na+2,na1p2=na1+2,nbp2=nb+2)
+61a63
+>         real a1 (na1)               ! vector to contain N^{1/2}
+68c70
+< 	character*80 mssa, mssb   !  the names of the mass-store files
+---
+> 	character*120 mssa, mssa1 , mssb   !  the names of the mass-store files
+72c74,76
+< c change next 2 lines
+---
+> c change next few lines for mass store names
+> c
+> c exp_1
+74c78,86
+<      1  '/RAEDER/MAMS/EXPL/H48-72/LANC/IS1/I1-199/v.dat.1'
+---
+>      1'/RAEDER/MAMS/EXPL/H48-72/LANC/IS1/I1-199/v.dat.1'
+>         mssa1 = 
+>      1'/RAEDER/MAMS/EXPL/H48-72/LANC/IS1/I1-199/vdim.dat.1'
+> c
+> c exp_2
+> c        mssb = 
+> c     1'/RAEDER/MAMS/EXPL/H24-48/LANC/MSTTLM/IS1/I0-199/V1-20/vdim.dat.1'
+> c
+> c exp_3
+76c88,89
+<      1  '/RAEDER/MAMS/EXPL/H24-48/LANC/MSTTLM/IS1/I0-199/V1-20/v.dat.1'
+---
+>      1'/RAEDER/MAMS/EXPL/H48-72/LANC/IS4/I0-199/vdim.dat.1'
+> c
+79c92,94
+<      1      access='direct',recl=nap2*8)  !  vectors from experiment A
+---
+>      1      access='direct',recl=nap2*8)  !  z-vectors from experiment A
+> 	open (unit=24,file='x1vector',form='unformatted',
+>      1      access='direct',recl=na1p2*8)  !  v-vectors from experiment A
+81c96
+<      1      access='direct',recl=nbp2*8)  !  vectors from experiment B
+---
+>      1      access='direct',recl=nbp2*8)  !  v-vectors from experiment B
+83,85c98,101
+< 	write (21,530) mssa, mssb
+< 530	format(/2x,'experiment A  0 xvector'/2x,a80//
+<      1         /2x,'experiment B  0 yvector'/2x,a80//)
+---
+> 	write (21,530) mssa, mssa1, mssb
+> 530	format(/2x,'experiment A   0 xvector '/2x,a80//
+>      1         /2x,'experiment A1  0 x1vector'/2x,a80//              
+>      1         /2x,'experiment B   0 yvector '/2x,a80//)
+104a121,130
+> 
+>         if (i.eq.1) then          !  read first v-vector to get E-wgts
+> 	read (24,rec=irec) evx,bndevx,(a1(k),k=1,na1) 
+>         write (21,540) i,evx,bndevx
+>         do 115 ii = 1 , na
+>         a1 (ii) = a (ii) / a1 (ii)  !  z/v = N^{1/2} (dry E-wgts)
+>  115    continue
+> c       call matprt (a1,1,na,'energy weights',21)
+>         endif 
+> 
+119a146
+>         b (ii) = a1 (ii) * b (ii) !  make z = N^{1/2} v
+263a291
+> acquire /RAEDER/MAMS/EXPL/H48-72/LANC/IS1/I1-199/vdim.dat.1 0 x1vector
+267,268c295,297
+< #acquire /RAEDER/MAMS/EXPL/H48-72/LANC/IS1/I1-199/vdim.dat.1 0 yvector
+< acquire /RAEDER/MAMS/EXPL/H24-48/LANC/MSTTLM/IS1/I0-199/V1-20/v.dat.1 0 yvector
+---
+> acquire /RAEDER/MAMS/EXPL/H48-72/LANC/IS4/I0-199/vdim.dat.1 0 yvector 
+> #acquire /RAEDER/MAMS/EXPL/H24-48/LANC/MSTTLM/IS1/I0-199/V1-20/vdim.dat.1 0 yvector
+> #acquire /RAEDER/MAMS/EXDHI/LANC/MST/H24-48/DRYTLM/IS4/I0-199/V1-20/vdim.dat.1 0 yvector 
+271,273c300,303
+< assign -a xvector fort.22
+< assign -a yvector fort.23
+< assign -a spcout  fort.21
+---
+> assign -a xvector  fort.22
+> assign -a x1vector fort.24
+> assign -a yvector  fort.23
+> assign -a spcout   fort.21

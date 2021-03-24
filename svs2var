@@ -1,0 +1,109 @@
+#QSUB -eo -nr -q econ -lM 40.5Mw -lm 40.0Mw -lT 60:05:00 -lt 60:00:00
+#QSUB -A 05010049
+#	
+cd $TMPDIR
+csh -x << 'JOBEND' >& log
+setenv NCPUS 1
+ja
+echo 'Job name: Adj/Singvect/svs.2var'
+#
+# kdr
+# set MSCS = '/RAEDER/MAMS/EXPL/H24-48/LANC/DRYTLM/ISVar'
+# set MSCS = '/RAEDER/MAMS/EXPL/H48-72/LANC/IS1'
+# set MSCS = '/RAEDER/MAMS/EXPL/H24-48/LANC/MSTTLM/IS1'
+# set MSCS = '/RAEDER/MAMS/EXPL/H48-72/LANC/IS4T/MSTTLM'
+# set MSCS = '/RAEDER/MAMS/EXPL/H48-72/LANC/IS1/DRYTLM'
+# set MSCS = '/RAEDER/MAMS/SUM2/H24-36/2M/LANC/IS1-1/MSTTLM'
+# set MSCS = '/RAEDER/MAMS/EXPL4/H60-72/2M/LANC/IS1-1/MSTTLM'
+# set MSCS = '/RAEDER/MAMS/EXPL4/H48-72/2M/LANC/IS1-1/MSTTLM'
+# set MSCS = '/RAEDER/NONLIN/TECHTEST/0213/H0-24/IS1-1/CRAY'
+# set MSCS = '/RAEDER/NONLIN/TECHTEST/0213/H0-24/IS1-1/varfile'
+
+set MSCS = '/RAEDER/MAMS/Jrain/S3MM12-24/LANC/IS1v-1'
+
+set IT = '10-29'
+set VC = '1-8'
+set SUN = '2001/Qsens/s3is1v-1i'${IT}'.v'${VC}
+#
+# set SUN = '2001/Micnetcdf/is1-1varfilei'${IT}'.v'${VC}
+# set SUN = '2001/Jrain/is1-1i'${IT}'.v'${VC}
+# set SUN = '2001/Qsens/is1-1i'${IT}'.v'${VC}
+# set SUN = '1999/SV6hr/is1d12i'${IT}'.v'${VC}
+# set SUN = '1999/SVsim/is4ti'${IT}'.5v'${VC}
+# set SUN = '1999/EXvar/isvi'${IT}'.v'${VC}
+# set SUN = '1999/EXmst/is1i'${IT}'.v'${VC}
+# set SUN = '1997/Mstacc2/is1di'${IT}'.v'${VC}
+# set SUN = '1998/J89dry/is1di'${IT}'.v'${VC}
+#
+# from getjob script; to identify program being run
+#	   acquire results from previous run if applicable
+#          remove any old ones that may interfere
+# kdr
+#
+# If the last file here was not filled by the previous run, then acquire
+# it for the second.  The second run will add to it. 
+# The old version will be overwritten on the
+# mass store, but not on the disc (/usr/tmp...).  
+# (Ndispose has 'nocopy' set for the APTH address)
+# If it's not filled by the second run,
+# the third run will require the removal of the disc version, so
+# that the up to date, mass store version will be acquired.
+#   My use of Iteration numbers in the names makes this unnecessary
+#
+# kdr
+# rm /usr/tmp/raeder${MSCS}/I2-5/result.dat.a
+#
+acquire ${MSCS}/I0-9/result.dat.a 0 result.dat.a nocom 360 bin
+# acquire ${MSCS}/I0-199/result.dat.a 0 result.dat.a nocom 160 bin
+# acquire ${MSCS}/I0-199/result.dat.a 0 result.dat.a nocom 160 bin
+# acquire ${MSCS}/I200-399/result.dat.b 0 result.dat.b nocom 160 bin
+# acquire /RAEDER/TEMP/EXPMST/result.dat.c 0 result.dat.c nocom 160 bin
+#          get the main program
+#
+# rcp ${MACHINE}:/home/raeder/Adj/Singvect/xnorms.2norm xnorms.f
+# This can't be used by svd.2var; more things passed to Xnorms0
+# and add to type statements too.
+
+
+
+rcp ${MACHINE}:/home/raeder/Adj/Singvect/xnorms.2var xnorms.f
+
+
+
+rcp ${MACHINE}:/home/raeder/Adj/Singvect/svd.2var driver.f
+cat driver.f xnorms.f > lanc.f
+f90raed lanc.f llu "-evi -dp -r2 -G1" \
+        MAMS2B2,lanc97,ncarm,ncaro exec
+#
+#           create a listing of the files in the tmp directory 
+#
+ls -la >> Ooutput91
+#
+#           dispose the results
+#
+dispose vectordim.dat ${MSCS}/I${IT}/V${VC}/vdim.dat.1     copy 365 ' ' 
+dispose vector.dat    ${MSCS}/I${IT}/V${VC}/v.dat.1      nocopy 365 ' ' 
+dispose Ooutput91     ${MSCS}/I${IT}/V${VC}/lnfull.dat.1 nocopy 365 ' ' 
+#
+# kdr
+
+# msmv -f /RAEDER/TEMP/Tin1-1/result.dat.a ${MSCS}/I${IT}/result.dat.a
+msmv -f /RAEDER/TEMP/s31v-1/result.dat.a ${MSCS}/I${IT}/result.dat.a
+# msmv -f /RAEDER/TEMP/E41-1d/result.dat.a ${MSCS}/I${IT}/result.dat.a
+# msmv -f /RAEDER/TEMP/S21-1c/result.dat.b ${MSCS}/I${IT}/result.dat.b
+#
+rcp Ooutput91  ${MACHINE}:${DATA}/${SUN}.91
+rcp lanc.out   ${MACHINE}:${DATA}/${SUN}.out
+# rcp lanc.lst   ${MACHINE}:${DATA}/${SUN}.lst
+#
+#
+ja -clh
+ja -st
+cp log  ${HOME}/svcray.log
+rcp log  ${MACHINE}:${DATA}/${SUN}.log
+# rsh chi.cgd.ucar.edu -l raeder beep
+'JOBEND'
+#  
+#
+
+

@@ -1,0 +1,1566 @@
+#QSUB -eo -lt 240 -lT 300 -lm 2.7Mw -lM 3.0Mw -q reg
+
+cd $TMPDIR
+csh -x << 'JOBEND' >& log
+ja
+
+cat << 'EOFD' > progb.f
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      LOGICAL FUNCTION filled(array,length,valnul)
+
+      DIMENSION array(length)
+
+      filled = .F.
+      DO 10 i=1,length
+         IF (array(i).ne.valnul) THEN
+            filled = .T.
+            RETURN
+         END IF
+ 10   END DO
+
+      RETURN
+      END
+C
+c x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x
+c
+      SUBROUTINE KchngJ(flds3D,flds2D,stats
+     &                 ,ni,nj,nk,nkinds,n3Dflds,n2Dflds)
+
+      DIMENSION 
+     &   flds3D(ni,nj,nk,n3Dflds,nkinds)
+     &  ,flds2D(ni,nj   ,n2Dflds,nkinds)
+     &  ,stats(5,nk,n3Dflds+n2Dflds,nkinds)
+
+c stats has values max,min,mean,rms,st.dev  for each level and kind
+c      PRINT*,' '
+c      PRINT*,'No change in J calculated'
+
+       chngJ = 0.
+       PRINT*,'k, max u, max v, max T ,chngJ'
+       DO 159 k=1,nk
+          PRINT*,k,stats(1,k,1,1),stats(1,k,2,1),stats(1,k,3,1),chngJ
+       DO 159 j=1,nj
+       DO 159 i=1,ni
+c change in J purely from adjoint; u and v contributions
+c renormed by MAX adj field value, (different for each level)
+          chngJ = chngJ + flds3D(i,j,k,1,1) *flds3D(i,j,k,1,1)
+     &                                      *3./stats(1,k,1,1)
+     &                  + flds3D(i,j,k,2,1) *flds3D(i,j,k,2,1)
+     &                                      *3./stats(1,k,2,1)
+ 159   END DO
+c change in J purely from adjoint; T and ps contributions
+       DO 169 k=1,nk
+       DO 169 j=1,nj-1
+       DO 169 i=1,ni-1
+          chngJ = chngJ + flds3D(i,j,k,3,1) *flds3D(i,j,k,3,1)
+     &                                      *1./stats(1,k,3,1)
+          IF (k.EQ.1) THEN
+             chngJ = chngJ + flds2D(i,j,1,1) *flds2D(i,j,1,1) 
+     &                                       *1./stats(1,k,n3Dflds+1,1)
+          END IF
+ 169   END DO
+
+
+c      ib1 = 21
+c      jb1 = 37
+c      kb1 = 5
+c      nib = 17
+c      njb = 17
+c      nkb = 9
+c
+cc nonlinear change in J for potential vorticity
+c      chngJ = 0.
+c      DO 100 k=kb1,kb1+nkb-1
+c      DO 100 j=jb1,jb1+njb-1
+c      DO 100 i=ib1,ib1+nib-1
+c         chngJ = chngJ + flds3D(i,j,k,8,1) - flds3D(i,j,k,8,2)
+c 100  END DO
+cc correction because this normalization was left out of the adjoint
+cc definition
+c      chngJ = chngJ/(nib*njb*nkb)
+       PRINT*,' '
+c       PRINT*,'This is just for practice; not an actual change in J'
+       PRINT*,'change in J = ',chngJ
+       PRINT*,' '
+      
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kconsfl (sigf, sigh, dsig, ni, nj, nk, nkp,
+     &                   ni1, nj1, R, g, gr, tlapse, dx, dx2)
+
+c      CONSTANTS, GRID ARRAYS
+
+      dimension sigf(nkp), sigh(nk), dsig(nk)
+
+      dx2=2.*dx
+      ni1=ni-1
+      nj1=nj-1
+
+      R = 287.
+      g = 9.80
+      gr=1/g
+      TLAPSE = -6.5E-03
+
+      do 3 k=1,nk
+         sigh(k)=.5*(sigf(k+1)+sigf(k))
+    3 continue
+
+      do 4 k=1,nk
+         dsig(k)=sigf(k+1)-sigf(k)
+    4 continue
+
+      return
+      end
+c
+c x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x 
+c
+      SUBROUTINE Kcorcov(fld1,fld2,ni,nj,i1,j1,ni1,nj1,nk,ndot
+     &                  ,thresh,spval,ccswtch,corcov,sum)
+
+      DIMENSION fld1(ni,nj,nk),fld2(ni,nj,nk), corcov(nk+1)
+     &         ,sum(nk,0:2)
+
+      sum = 0.
+      PRINT*,'i1,j1,ni1,nj1,nk in Kcorcov ',i1,j1,ni1-ndot,nj1-ndot,nk 
+
+      DO 12 k=1,nk
+         prodct = 0.
+         sumsq1 = 0.
+         sumsq2 = 0.
+c        The edge values are excluded from the calculation
+         DO 11 j= j1+1 , j1-1 +nj1-1 -ndot
+         DO 10 i= i1+1 , i1-1 +ni1-1 -ndot
+            IF ((fld1(i,j,k).NE.spval .AND.fld2(i,j,k).NE.spval) .AND.
+     &          (ABS(fld1(i,j,k)).gt.thresh .or.
+     &           ABS(fld2(i,j,k)).gt.thresh     )               )THEN 
+               prodct = prodct + fld1(i,j,k)*fld2(i,j,k)
+               IF (ccswtch.EQ.1.) THEN
+                  sumsq1 = sumsq1 + fld1(i,j,k)**2 
+                  sumsq2 = sumsq2 + fld2(i,j,k)**2 
+               END IF
+            END IF
+ 10      END DO
+ 11      END DO
+         corcov(k) = prodct
+         sum(k,0) = prodct
+         IF (sumsq1*sumsq2.NE.0. .AND. ccswtch.EQ.1.) THEN
+            PRINT*,'k, sumsq1, sumsq2, prodct = ',k,sumsq1,sumsq2,prodct
+            corcov(k) = corcov(k)/SQRT(sumsq1*sumsq2)
+            sum(k,1) = sumsq1
+            sum(k,2) = sumsq2
+         ELSE
+            PRINT*,'sumsq1 = ',sumsq1,' sumsq2 = ',sumsq2,' level ', k
+            PRINT*,'no correlation calculation is possible'
+         END IF
+ 12   END DO
+
+      prodct = 0.
+      sumsq1 = 0.
+      sumsq2 = 0.
+      DO 29 k=1,nk
+         prodct = prodct + sum(k,0)
+         IF (ccswtch.EQ.1.) THEN
+            sumsq1 = sumsq1 + sum(k,1)
+            sumsq2 = sumsq2 + sum(k,2)
+         END IF
+ 29   CONTINUE
+
+      corcov(nk+1) = prodct
+      IF (sumsq1*sumsq2.NE.0. .AND. ccswtch.EQ.1.) THEN
+         corcov(nk+1) = corcov(nk+1)/SQRT(sumsq1*sumsq2)
+      ELSE
+         PRINT*,'sumsq1 = ',sumsq1,' sumsq2 = ',sumsq2,' level ', k
+         PRINT*,'no correlation calculation is possible'
+      END IF
+         
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kcrms(f,fw,ni,nj,nk,i1stat,j1stat,nistat,njstat,ndot
+     &                ,spval,cfield,iunit)
+
+      DIMENSION f(ni,nj,nk),fw(5,nk)
+      CHARACTER cfield*3
+c
+c  compute max, min, mean, rms  and standdev values and print out
+c
+      k1=1
+      WRITE(iunit,10) cfield
+
+      DO 3 k=k1,nk
+         fmax=-1.e100
+         fmin= 1.e100
+         fsum=0.
+         frms=0.
+         nsum=0
+c The edge values are excluded from the calculation
+         DO 2 j=j1stat+1,j1stat+njstat-ndot-1
+         DO 1 i=i1stat+1,i1stat+nistat-ndot-1
+            IF (f(i,j,k).NE.spval) THEN
+               IF (f(i,j,k).lt.fmin) fmin=f(i,j,k)
+               IF (f(i,j,k).gt.fmax) fmax=f(i,j,k)
+               fsum=fsum+f(i,j,k)
+               frms=frms+f(i,j,k)*f(i,j,k)
+               nsum=nsum+1
+            END IF
+    1    CONTINUE
+    2    CONTINUE
+         fw(1,k)=fmax
+         fw(2,k)=fmin
+         IF (nsum.NE.0) THEN
+            fw(3,k)=fsum/nsum
+            fw(4,k)=sqrt(frms/REAL(nsum) + 1.e-100)
+            fw(5,k)=SQRT(REAL(nsum)*frms - fsum**2)/REAL(nsum)
+         ELSE
+            PRINT*,'the number of points used to calculate the ',
+     &             'statistics for ',cfield,' is = 0 in Kcrms'
+         END IF
+    3 CONTINUE
+
+      WRITE(iunit,12)
+      DO 5 k=k1,nk
+         WRITE(iunit,15) k,(fw(istat,k),istat=1,5)
+ 5    END DO
+
+      RETURN
+ 
+   10 FORMAT('0  ',A3,'  measures')
+   12 FORMAT('k',9X,'max',11X,'min',11X,'mean',10X,'rms',11X,'st.dev')
+   15 FORMAT(I2,5(2X,1PE12.4))
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kdcpladj (flds3D,flds2D,work,ikrd,crdknd,lq
+     &                    ,ni,nj,nk,n3Dflds,n2Dflds,nkinds)
+
+      CHARACTER*5 crdknd
+      LOGICAL lq
+      DIMENSION 
+     &   flds3D(ni,nj,nk,n3Dflds,nkinds) 
+     &  ,flds2D(ni,nj   ,n2Dflds,nkinds), work(ni,nj,nkinds)
+
+      PRINT*,'crdknd and ikrd in Kdcpladj = ',crdknd,ikrd
+
+c The order of the DO loops and the initialization of work looks 
+c inverted here, but is ok and is more efficient (inner loop over the
+c first array subscript)  Instead of picking an i,j point and summing
+c over k, we're adding the proper contribution from a given level to
+c each i,j point, then going up to the next level and repeating
+
+      work(:,:,ikrd) = 0.
+
+      DO 159 k=1,nk
+      DO 159 j=1,nj
+      DO 159 i=1,ni
+         flds3D(i,j,k,1,ikrd+1) = flds3D(i,j,k,1,ikrd+1)
+     &                             /work(i,j,ikrd+1)
+         flds3D(i,j,k,2,ikrd+1) = flds3D(i,j,k,2,ikrd+1)
+     &                             /work(i,j,ikrd+1)
+         work(i,j,ikrd) = work(i,j,ikrd)
+     &                  + flds3D(i,j,k,1,ikrd)*flds3D(i,j,k,1,ikrd+1)
+     &                  + flds3D(i,j,k,2,ikrd)*flds3D(i,j,k,2,ikrd+1)
+         flds3D(i,j,k,1,ikrd) = work(i,j,ikrd+1)*flds3D(i,j,k,1,ikrd)
+         flds3D(i,j,k,2,ikrd) = work(i,j,ikrd+1)*flds3D(i,j,k,2,ikrd)
+ 159  END DO
+
+c Ax2d interpolates the DOT grid array TO the cross grid array, AND
+c ADDS THE RESULT TO THE CROSS GRID ARRAY, putting the sum into the
+c cross grid array; Here we want don't want the old cross grid values
+c included, so set them to 0 before calling Ax2d
+
+      work(:,:,ikrd+1) = 0.
+      CALL Ax2d (work(1,1,ikrd),work(1,1,ikrd+1), ni,nj,1,.F.)
+
+c This next step should be done OUTside the 169 DO loops because we 
+c don't want to add work(ikrd+1) to ps(ikrd) for every k; only once
+
+      flds2D(:,:,1,ikrd) = flds2D(:,:,1,ikrd)+work(:,:,ikrd+1)
+
+      DO 169 k=1,nk
+      DO 169 j=1,nj-1
+      DO 169 i=1,ni-1
+         flds3D(i,j,k,3,ikrd+1) = flds3D(i,j,k,3,ikrd+1)
+     &                           /flds2D(i,j,1,ikrd+1)
+         flds2D(i,j,1,ikrd) = flds2D(i,j,1,ikrd) 
+     &                +  flds3D(i,j,k,3,ikrd)* flds3D(i,j,k,3,ikrd+1)
+         flds3D(i,j,k,3,ikrd)=flds3D(i,j,k,3,ikrd)*flds2D(i,j,1,ikrd+1)
+ 169  END DO
+
+      IF (lq) THEN
+         DO 179 k=1,nk
+         DO 179 j=1,nj-1
+         DO 179 i=1,ni-1
+            flds3D(i,j,k,4,ikrd+1) = flds3D(i,j,k,4,ikrd+1)
+     &                              /flds2D(i,j,1,ikrd+1)
+            flds2D(i,j,1,ikrd) = flds2D(i,j,1,ikrd) 
+     &                +  flds3D(i,j,k,4,ikrd)* flds3D(i,j,k,4,ikrd+1)
+            flds3D(i,j,k,4,ikrd) = 
+     &           flds3D(i,j,k,4,ikrd)*flds2D(i,j,1,ikrd+1)
+ 179     END DO
+      END IF
+
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kdcplfwd (flds3D,flds2D,work,ikrd,crdknd,lq
+     &                    ,ni,nj,nk,n3Dflds,n2Dflds,nkinds)
+
+      CHARACTER*5 crdknd
+      LOGICAL lq
+      DIMENSION flds3D(ni*nj*nk,n3Dflds,nkinds) 
+     &         ,flds2D(ni*nj,n2Dflds,nkinds) 
+     &         ,work(ni*nj,nkinds)
+
+      IF (crdknd(1:3).EQ.'NLM' .OR. crdknd(4:4).EQ.'b') THEN
+         ishft = 0
+      ELSE IF(crdknd(1:3).EQ.'TLM') THEN
+         ishft = 1
+      ELSE
+         PRINT*,'crdknd in Kdcplfwd is not acceptable = ',crdknd
+      END IF
+
+c decouple basic state
+      CALL Bdecup(flds3D(1,1,ikrd+ishft),flds3D(1,1,ikrd+ishft)
+     &           ,work(1,ikrd+ishft),ni,nj,nk,0)
+      CALL Bdecup(flds3D(1,2,ikrd+ishft),flds3D(1,2,ikrd+ishft)
+     &           ,work(1,ikrd+ishft),ni,nj,nk,0)
+      CALL Bdecup(flds3D(1,3,ikrd+ishft),flds3D(1,3,ikrd+ishft)
+     &           ,flds2D(1,1,ikrd+ishft),ni,nj,nk,1)
+      IF (lq) CALL Bdecup(flds3D(1,4,ikrd+ishft),flds3D(1,4,ikrd+ishft)
+     &                   ,flds2D(1,1,ikrd+ishft) ,ni,nj,nk,1)
+
+c decouple perturbed fields 
+      IF (crdknd(1:3).EQ.'TLM') THEN
+         CALL Fdecup(flds3D(1,1,ikrd),flds3D(1,1,ikrd),work(1,ikrd)
+     &              ,flds3D(1,1,ikrd+ishft),work(1,ikrd+ishft)
+     &              ,ni,nj,nk,0)
+         CALL Fdecup(flds3D(1,2,ikrd),flds3D(1,2,ikrd),work(1,ikrd)
+     &              ,flds3D(1,2,ikrd+ishft),work(1,ikrd+ishft)
+     &              ,ni,nj,nk,0)
+         CALL Fdecup(flds3D(1,3,ikrd),flds3D(1,3,ikrd),flds2D(1,1,ikrd)
+     &              ,flds3D(1,3,ikrd+ishft),flds2D(1,1,ikrd+ishft)
+     &              ,ni,nj,nk,1)
+         IF (lq) CALL Fdecup
+     &              (flds3D(1,4,ikrd),flds3D(1,4,ikrd),flds2D(1,1,ikrd)
+     &              ,flds3D(1,4,ikrd+ishft),flds2D(1,1,ikrd+ishft) 
+     &              ,ni,nj,nk,1)
+      END IF
+
+      return
+      end
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kdeflt ( nk,nflds,   
+     &   ldomapD, LWcontD,LWmapD,
+     &   cgrkndD,cdescrD,ikgrfD,i1grfD,j1grfD,nigrfD,njgrfD,graphD,
+     &   FLOWD, FHGHD,SMTHD,NDSHD,NHGHD,NSETD,NCMD,LLPD,LZEROD,NMMD ,
+     &   SFSD ,SHLOWD, SHHIGHD,NUSCD, USCD, LUSCD, SHL1D, SLL1D,
+     &   ldomap, LWcont,LWmap,
+     &   cgrknd,cdescr,ikgrf, i1grf,j1grf,nigrf,njgrf, graph,clbl,
+     &   FLOW, FHGH,SMTH,NDSH,NHGH,NSET,NCM,LLP,LZERO,NMM ,
+     &   SFS ,SHLOW, SHHIGH,NUSC, USC, LUSC, SHL1, SLL1)
+
+      CHARACTER*5 cgrkndD(6),cgrknd(6)
+      CHARACTER*20 cdescrD(6),cdescr(6)
+      CHARACTER*1 clbl(nk,nflds)
+      LOGICAL ldomap,ldomapD
+
+      DIMENSION  ikgrf(6),
+     &   graphD(nk,nflds),SHLOWD(3), SHHIGHD(3), USCD(20), LUSCD(20), 
+     &           ikgrfD(6) ,
+     &   graph(nk,nflds),  SHLOW(3), SHHIGH(3),USC(20), LUSC(20)
+
+      ldomap  = ldomapD
+      LWmap      = LWmapD
+      LWcont      = LWcontD
+
+      ikgrf   = ikgrfD 
+      cgrknd  = cgrkndD    
+      cdescr  = cdescrD    
+      i1grf   = i1grfD
+      j1grf   = j1grfD
+      nigrf   = nigrfD
+      njgrf   = njgrfD
+
+      graph  = graphD
+      clbl(1:nk,1:nflds) = ' '
+
+      FLOW    = FLOWD
+      FHGH    = FHGHD
+      SMTH    = SMTHD
+      NDSH   = NDSHD
+      NHGH    = NHGHD
+      NSET    = NSETD
+      NCM     = NCMD
+      LLP     = LLPD
+      LZERO   = LZEROD
+      NMM     = NMMD 
+      SFS     = SFSD
+      SHLOW   = SHLOWD 
+      SHHIGH  = SHHIGHD
+      NUSC    = NUSCD
+      USC     = USCD
+      LUSC    = LUSCD
+      SHL1    = SHL1D
+      SLL1    = SLL1D
+
+      RETURN
+      END 
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kdivort(div,vort,u,v,fmapx,work,dx,ni,nj,nk,ldiv,lvort)
+
+      LOGICAL ldiv,lvort
+      DIMENSION div(ni,nj,nk),vort(ni,nj,nk),u(ni,nj,nk),v(ni,nj,nk)
+     &         ,work(ni,nj),fmapx(ni,nj)
+
+      dx2 = 2.*dx
+      DO j=1,nj-1
+      DO i=1,ni-1
+         work(i,j) = fmapx(i,j)*fmapx(i,j)/dx2
+      END DO
+      END DO
+
+      DO k=1,nk
+      DO j=1,nj-1
+      DO i=1,ni-1
+         same = work(i,j)*(-u(i+1,j,k)+u(i,j+1,k)+v(i+1,j+1,k)-v(i,j,k))
+         diff = work(i,j)*(-u(i+1,j+1,k)+u(i,j,k)-v(i+1,j,k)+v(i,j+1,k))
+         IF (ldiv)   div(i,j,k) = same - diff
+         IF (lvort) vort(i,j,k) = same + diff
+      END DO
+      END DO
+      END DO
+
+      RETURN
+      END
+
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+      SUBROUTINE Kgeopp( H, T, PS, HT, SIG, NI, NJ, NK, P, KP,
+     &                    R, G, TLAPSE, PT)
+C
+C  HEIGHT DETERMINES THE HEIGHT OF PRESSURE LEVELS.
+C     ON INPUT:
+C        H AND T ARE HEIGHT AND TEMPERATURE ON SIGMA, RESPECTIVELY.
+C        PS  = SURFACE PRESSURE - MODEL TOP PRESSURE.
+C        SIG = SIGMA LEVELS.
+C        P = PRESSURE LEVELS DESIRED.
+C     ON OUTPUT:
+C        ALL FIELDS EXCEPT H ARE UNCHANGED.
+C        H HAS HEIGHT FIELDS AT KP PRESSURE LEVELS.
+C
+C  FOR UPWARD EXTRAPOLATION, T IS CONSIDERED TO HAVE 0 VERITCAL DERIV.
+C  FOR DOWNWARD EXTRAPOLATION, T HAS LAPSE RATE OF TLAPSE (K/KM)
+C     AND EXTRAPOLATION IS DONE FROM THE LOWEST SIGMA LEVEL ABOVE
+C     THE BOUNDARY LAYER (TOP ARBITRARILY TAKEN AT SIGMA = BLTOP).
+C     EQUATION USED IS EXACT SOLUTION TO HYDROSTATIC RELATION,
+C     GOTTEN FROM R. ERRICO (ALSO USED IN SLPRES ROUTINE):
+C      Z = Z0 - (T0/TLAPSE) * (1.-EXP(-R*TLAPSE*LN(P/P0)/G))
+C
+      dimension H(NI,NJ,NK), T(NI,NJ,NK)
+      dimension HT(NI,NJ), PS(NI,NJ), SIG(NK), P(KP)
+      dimension PSIG(20), FINTERP(20)
+C
+
+      PRINT*,' '
+      PRINT*,'In Kgeopp'
+      
+      DO 50 I=1,NI-1
+      DO 50 J=1,NJ-1
+
+         DO 20 K=1,NK
+            PSIG(K) = SIG(K) * PS(I,J) + PT
+ 20      CONTINUE
+         PSFC = PS(I,J) + PT
+
+         DO 40 N=1,KP
+            KT = 1
+            DO 30 K=1,NK
+               IF (PSIG(K).LT.P(N)) KT=K
+   30       CONTINUE
+            KB = KT + 1
+
+            IF (P(N).LE.PSIG(1)) THEN
+               TEMP = T(I,J,1)
+               FINTERP(N) = H(I,J,1) + R * TEMP *ALOG(PSIG(1)/P(N)) / G
+            ELSE IF( (P(N).GT.PSIG(1)) .AND. (P(N).LT.PSIG(NK)) ) THEN
+               WT = ALOG(PSIG(KB)/P(N)) / ALOG(PSIG(KB)/PSIG(KT))
+               WB = ALOG(P(N)/PSIG(KT)) / ALOG(PSIG(KB)/PSIG(KT))
+               TEMP = WT * T(I,J,KT) + WB * T(I,J,KB)
+               TEMP = ( TEMP + T(I,J,KB) ) / 2.
+               FINTERP(N) = H(I,J,KB) + R*TEMP*ALOG(PSIG(KB)/P(N)) /G
+            ELSE IF( (P(N).GE.PSIG(NK)) .AND. (P(N).LE.PSFC) ) THEN
+               TEMP = T(I,J,NK)
+               FINTERP(N) = HT(I,J) + R * TEMP * ALOG(PSFC/P(N)) / G
+            ELSE IF(P(N).GT.PSFC) THEN
+c               TEMP = T(I,J,KBC) - TLAPSE * (H(I,J,KBC)-HT(I,J))
+               TEMP = T(I,J,KT) - TLAPSE * (H(I,J,KT)-HT(I,J))
+               FINTERP(N) = HT(I,J) - (TEMP/TLAPSE)
+     1              * ( 1. - EXP( -R * TLAPSE * ALOG(P(N)/PSFC) / G ))
+            ENDIF
+   40    CONTINUE
+
+         DO 45 N=1,KP
+            H(I,J,N) = FINTERP(N)*.1
+   45    CONTINUE
+
+   50 CONTINUE
+      PRINT*,'z has been renormalized to dam'
+
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kgeopsig (t, gp, topog, mi, mj, mk,
+     &                   psb, sigh, dsig, ptop, R, g)
+
+c---------------------------------------------------------------------
+c                       compute geopotential HEIGHT 
+c---------------------------------------------------------------------
+
+      dimension t(mi,mj,mk), gp(mi,mj,mk)
+      dimension psb(mi,mj), sigh(mk), dsig(mk), topog(mi,mj)
+
+      do 1 j=1,mj-1
+      do 1 i=1,mi-1
+         gp(i,j,mk)=topog(i,j)
+     &           -R*t(i,j,mk)*alog((sigh(mk)+ptop/psb(i,j))/
+     &            (1.+ptop/psb(i,j)))/g
+    1 continue
+      
+      do 2 k=1,mk-1
+         m=mk-k
+         do 2 j=1,mj-1
+         do 2 i=1,mi-1
+            gp(i,j,m)=gp(i,j,m+1)-
+     &                R*(  (t(i,j,m)*dsig(m)+t(i,j,m+1)*dsig(m+1))/
+     &                                     ((dsig(m)+dsig(m+1))*g)  )*
+     &          alog((sigh(m)+ptop/psb(i,j))/(sigh(m+1)+ptop/psb(i,j)))
+c see *g in denom of this expression-> geop HEIGHT
+    2 continue
+
+      return
+      end
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kknums(callknds,cwkknd,nused,kinds,nkinds,nallknds
+     &                 ,ikuse,nktouse)
+
+c    find numeric labels for kinds corresponding to the character
+c    labels in INITDATA; cwkknd
+c          callknds= array of nallknds char labels of all the kinds 
+c             of fields (from data section, main routine)
+c          cwkknd= array of ch labels of the kinds which we
+c              want to deal with during this itrep (from GRFDATA)
+c          kinds= array of the nkinds integer labels of the kinds 
+c             with which we are working (only) 
+c          ikuse= array of <=nkinds integer labels of the kinds we
+c             want to graph for this itrep  (returned here)
+c          nktouse <=nkinds; the number of kinds for which we want
+c              to find cor or cov this itrep  (returned here)
+
+
+      CHARACTER callknds(nallknds)*5, cwkknd*5
+      DIMENSION    kinds(nkinds),ikuse(6), cwkknd(nused)
+
+      nktouse = 0
+      DO i=1,6
+         ikuse(i) = 0
+      END DO
+      DO 10 kind=1,nallknds
+         IF (callknds(kind).eq.cwkknd(nktouse+1)) THEN
+            DO 5 nkind=1,nkinds
+               IF (kinds(nkind).eq.kind) THEN
+                  nktouse = nktouse + 1
+                  ikuse(nktouse) = nkind
+               END IF
+ 5          END DO
+         END IF
+ 10   END DO
+ 
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kpotvort(flds3D,flds2D,pkhb,sigf,sigh
+     &                 ,dsigf,dsigh,ux,vx,cf,w1,w2,dx,xkap,ptop,g
+     &                 ,ni,nj,nk,n3Dflds,n2dflds)
+
+      DIMENSION flds3D(ni,nj,nk,n3Dflds),flds2D(ni,nj,n2Dflds)
+     &         ,pkhb(ni,nj,nk),sigf(nk+1),sigh(nk),dsigf(nk)
+     &         ,dsigh(nk),ux(ni,nj,nk),vx(ni,nj,nk),cf(ni,nj)
+     &         ,w1(nk),w2(nk)
+
+
+      dx2 = 2.*dx
+
+      dsigh=0.
+      dsigf=0.
+      do k=1,nk-1
+         dsigh(k)=sigh(k+1)-sigh(k)
+      end do
+      do k=1,nk
+         dsigf(k)=sigf(k+1)-sigf(k) !dsigf
+      end do
+      do k=2,nk
+         w1(k)=(sigf(k)-sigh(k-1))/dsigh(k-1)
+         w2(k)=(sigh(k)-sigf(k))/dsigh(k-1)
+      end do
+
+      call Vpxkap (pkhb,flds2D,sigh,ptop,xkap,ni,nj,nk)
+
+      ux = 0.
+      vx = 0.
+      CALL Ax2d(flds3D(1,1,1,1),ux,ni,nj,nk,.F.)
+      CALL Ax2d(flds3D(1,1,1,2),vx,ni,nj,nk,.F.)
+
+c maximum domain size for PV comp:
+      ib1=4
+      nib=ni-2*ib1+1
+      jb1=4
+      njb=nj-2*jb1+1
+      kb1=2
+      nkb=nk-2*kb1+2
+c
+      call PVcomp (flds3D(1,1,1,8),ux,vx,flds3D(1,1,1,3)
+     &,            flds2D,pkhb,cf,w1,w2,dx2,g,dsigf
+     &,            ib1,nib,jb1,njb,kb1,nkb
+     &,            ni,nj,nk,1.)
+
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Krdfill(cfldsr,cfldsrw,cfldsi,ifldsr,ifldsrw,ifldsi)
+   
+      character*8 cfldsr(1),cfldsrw(1),cfldsi(1)
+      integer     ifldsr(3),ifldsrw(3),ifldsi(3)
+      
+      ifldsr(1:2) = 0
+      do 2 nrw=1,ifldsrw(1)
+      do 1 ni =1,ifldsi(1)
+         if (cfldsi(ni).EQ.cfldsrw(nrw)) then
+            ifldsr(1) = ifldsr(1)+1
+            cfldsr(ifldsr(1)) = cfldsi(ni)
+         end if
+ 1    end do
+ 2    end do
+
+      do 4 nrw=ifldsrw(1)+1,ifldsrw(1)+ifldsrw(2)
+      do 3 ni =ifldsi(1)+1,ifldsi(1)+ifldsi(2)
+         if (cfldsi(ni).EQ.cfldsrw(nrw)) then
+            ifldsr(2) = ifldsr(2)+1
+            cfldsr(ifldsr(1)+ifldsr(2)) = cfldsi(ni)
+         end if
+ 3    end do
+ 4    end do
+
+      DO n=ifldsr(1)+ifldsr(2)+ifldsr(3)+1,30 
+         cfldsr(n) = '        '
+      END DO
+
+      return
+      end
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kreadhd (crdknd,cfldsi,cMSnam,iunit1,ir1,lprflds
+     &                   ,cfldsrw,cfldsr,ifldsrw,ifldsr
+     &                   ,ni,nj,nk,nij,dx,ptop,clat,clon
+     &                   ,nlvars,nrvars,nnvars,nfieldsx,nbsized,nworkr
+     &                   ,sigf,sigh,nvarsi,rvarsi,workr,fieldh,lvarsi)
+
+      CHARACTER cftitle*30,  crdknd*5
+     &         , charsi(6)*128,cflttr*1,cMSnam*(*)
+      CHARACTER*(8) cfldsi(nfieldsx) ,cfldsrw(nfieldsx),cfldsr(nfieldsx)
+      LOGICAL lvarsi(nlvars),lprflds,lsplitr,lbdryr
+      DIMENSION sigf(nk+1), sigh(nk)
+     &         ,workr(10*nij),fieldh(nij,4)
+     &         ,rvarsi(nrvars) ,nvarsi(nnvars)
+     &         ,ifldsrw(5),ifldsr(5)
+
+      nkp = nk + 1
+
+c acquire before open in order to read rec size from first header record
+      ibsized = nbsized
+      IF (crdknd(1:3).NE.'NLM') ibsized = 2*nbsized
+      CALL Nacquire(cMSnam,'O',0,.T.,ibsized,iunit1)
+      CALL Nopen (0,iunit1,lprflds)
+      CALL Nreadh (nvarsi,lvarsi,rvarsi,cfldsi,charsi,fieldh,workr
+     &            ,cfldsrw,cfldsr,ifldsrw,ifldsr,ni,nj,nk
+     &            ,nij,ir1,iunit1,.t.,.t.,.T.
+     &            ,nnvars,nlvars,nrvars,nworkr)
+      PRINT*,'past Nreadh'
+      CALL Ngethead (sigf,tpmeanb,ptop,dx,clat,clon
+     &              ,xhour0,time0,iyear0,imonth0,iday0
+     &              ,nsplitr,radfreqr,workr,lsplitr,lbdryr,workr(nk+1)
+     &              ,tpratior,cfldsi,charsi,nk,nkp,rvarsi
+     &              ,lvarsi,nvarsi,.T.,nnvars,nrvars,nlvars
+     &              ,' input')
+
+      DO 109 k=1,nk
+         sigh(k) = (sigf(k)+sigf(k+1))/2.
+ 109  END DO
+
+      PRINT*,'The header of ',crdknd,' has been read in;'
+
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C 
+      SUBROUTINE Kreadt(flds3D,flds2D,nvarsi,rvarsi,work
+     &                 ,timsin,ir1,ikrd,kinds,iunit1,ifldsrw,ifldsr
+     &                 ,renorm,lvarsi,ldecup,lprflds
+     &                 ,crdknd,callknds,cMSnams, cfldsrw,cfldsi,cfldsr
+     &                 ,ni,nj,nk,nij,nijk,nfiles,nkinds,nallknds,n3Dflds
+     &                 ,n2Dflds,nlvars,nrvars,nnvars,nfieldsx,nbsized
+     &                 ,nworkr)
+
+      CHARACTER*5 crdknd(6), callknds(nallknds)
+      CHARACTER*(*) cMSnams(6,10)
+      CHARACTER*(8) cfldsi(nfieldsx,nfiles) ,cfldsrw(nfieldsx)
+     &             ,cfldsr(nfieldsx,nfiles)
+      LOGICAL ldecup,lprflds ,lvarsi(nlvars,nfiles)
+      INTEGER ifldsr(3,nfiles), ifldsrw(3)
+c      PARAMETER (nij=ni*nj, nijk=nij*nk)
+
+      DIMENSION
+     &  timsin(nfiles),ir1(nfiles),iunit1(nfiles,2)
+     &  ,work(ni,nj,nfiles),ikrd(6),kinds(nfiles)
+     &  ,flds3D(nijk,n3Dflds,nkinds),flds2D(nij,n2Dflds,nkinds)
+     &  ,rvarsi(nrvars,nfiles) ,nvarsi(nnvars,nfiles)
+c
+      CALL Kknums(callknds,crdknd,6,kinds,nfiles,nallknds,ikrd,nktord)
+      PRINT*,'  '
+      PRINT*,'crdknd in readt; ', ( crdknd(i)//' ',i=1,nktord)
+      PRINT*,'kinds associated with crdknd ', (kinds(i),i=1,nktord)
+
+      DO 199 nf=1,nktord
+      IF ( crdknd(nf)(4:4).NE.'b') THEN
+
+      IF (crdknd(nf)(4:5).EQ.'in') THEN
+         xtime = timsin(nf)
+      ELSE
+         xtime = ABS(timsin(nf))*60.
+      END IF
+      CALL Nrcountn (ir1(nf),iunit,ntape,xtime,iunit1(nf,1)
+     &              ,rvarsi(1,nf),nvarsi(1,nf),0.,nnvars,nrvars)
+      IF (iunit .NE.iunit1(nf,2)) THEN
+         CALL Nacquire(cMSnams(nf,ntape),'O',0,.T.
+     &                ,nbsized,iunit)
+         CALL Nopen(nvarsi(2,nf),iunit,lprflds)
+         iunit1(nf,2) = iunit
+      END IF
+
+      ndimfld3 = nijk*n3Dflds
+      ndimfld2 = nij *n2Dflds
+      CALL Nreadt (flds3D(1,1,nf),flds2D(1,1,nf),work
+     &            ,xtimef,timsin(nf)
+     &            ,cfldsrw,cfldsr(1,nf),cfldsi(1,nf)
+     &            ,ifldsrw,ifldsr(1,nf)
+     &            ,nvarsi(1,nf),.T.,1,0,ir1(nf),iunit,lprflds
+     &            ,nnvars,nworkr,ndimfld3,ndimfld2,'  ')
+
+c fill in extraneous edge values of x-grid with 0s
+      DO ifld=3,n3Dflds
+         CALL Cbdrycg(flds3D(1,ifld,nf),ni,nj,nk)
+      END DO
+      DO ifld=1,n2Dflds
+         CALL Cbdrycg(flds2D(1,ifld,nf),ni,nj, 1)
+      END DO
+
+c decoupling
+      IF (ldecup) THEN
+         PRINT*,'ikrd(nf) before decoupling ',ikrd(nf)
+         PRINT*,'Decoupling data from ',crdknd(nf)
+
+         IF (crdknd(nf)(1:4).EQ.'TLMo' .OR.
+     &       crdknd(nf)(1:4).EQ.'ADJo') THEN
+            CALL Bx2d (work(1,1,ikrd(nf+1)),
+     &                 flds2D(1,1,ikrd(nf+1)),ni,nj,1)
+         END IF
+         IF (crdknd(nf)(1:3).NE.'ADJ') THEN
+            CALL Bx2d (work(1,1,ikrd(nf))
+     &                ,flds2D(1,1,ikrd(nf)),ni,nj,1)
+            CALL Kdcplfwd (flds3D,flds2D,work,ikrd(nf),crdknd(nf)
+     &                    ,lvarsi(1,nf),ni,nj,nk,n3Dflds
+     &                    ,n2Dflds,nfiles)
+c Tg and ncr and cvr should not be decoupled; they're not coupled
+
+         ELSE
+            PRINT*,'Decoupling adjoint fields'
+            CALL Kdcpladj (flds3D,flds2D,work,ikrd(nf),crdknd(nf)
+     &                    ,lvarsi(1,nf),ni,nj,nk,n3Dflds
+     &                    ,n2Dflds,nkinds)
+         END IF
+      END IF         !decoupling
+
+c Renormalization
+      IF ((crdknd(nf)(1:3).EQ.'TLM' .OR. crdknd(nf)(1:3).EQ.'ADJ')
+     &    .AND. renorm.NE.1.) THEN
+         PRINT*,' '
+         PRINT*,crdknd(nf),' HAS BEEN RENORMALIZED BY ',renorm
+     &         ,' IS THIS DESIRED?'
+         PRINT*,' '
+         DO 155 i=1,nijk
+            flds3D(i,1,ikrd(nf)) = flds3D(i,1,ikrd(nf)) *renorm
+            flds3D(i,2,ikrd(nf)) = flds3D(i,2,ikrd(nf)) *renorm
+            flds3D(i,3,ikrd(nf)) = flds3D(i,3,ikrd(nf)) *renorm
+ 155     END DO
+         IF (lvarsi(1,nf)) THEN
+            DO 158 i=1,nijk
+               flds3D(i,4,ikrd(nf)) = flds3D(i,4,ikrd(nf)) *renorm
+ 158        END DO
+         END IF
+         PRINT*,'finished renorm loop'
+c        pressure
+         flds2D(1:nij,1,ikrd(nf)) = flds2D(1:nij,1,ikrd(nf)) *renorm
+c        ground temp
+         IF (lvarsi(2,nf)) flds2D(1:nij,2,ikrd(nf)) =
+     &            flds2D(1:nij,2,ikrd(nf))*renorm
+         PRINT*,'finished all renorm'
+c        rain
+         IF (lvarsi(3,nf)) THEN
+            flds2D(1:nij,3,ikrd(nf))=flds2D(1:nij,3,ikrd(nf))*renorm
+            flds2D(1:nij,4,ikrd(nf))=flds2D(1:nij,4,ikrd(nf))*renorm
+         END IF
+
+      END IF         !renormalization
+
+      END IF         !not bs
+ 199  END DO
+
+      RETURN
+      END
+c
+cXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+c
+      SUBROUTINE Kslpres( H, T, PSTAR, HT, SLP
+     1                 , SIG, IY, JX, KZ
+     2                 , TLAPSE, G, R, PTOP)
+C
+C   COMPUTE SEA LEVEL PRESSURE USING ERRICO'S SOLUTION DESCRIBED
+C     IN HEIGHT.
+C
+      REAL H(IY,JX,KZ), T(IY,JX,KZ)
+      REAL PSTAR(IY,JX), HT(IY,JX), SLP(IY,JX)
+      REAL SIG(KZ+1)
+C
+      bltop=SIG(KZ)
+C** FIND FIRST SIGMA LEVEL ABOVE BOUNDARY LAYER (LESS THAN SIG=BLTOP)
+      DO 10 K=1,KZ
+         IF(SIG(K).LE.BLTOP) KBC = K
+   10 CONTINUE
+
+C
+      PRINT*,' '
+      DO 20 I=1,IY-1
+      DO 20 J=1,JX-1
+         PSFC = PSTAR(I,J) + PTOP
+         TSFC = T(I,J,KBC) - TLAPSE * (H(I,J,KBC)-HT(I,J))
+c factor of 10 makes is hPa
+         SLP(I,J) = PSFC *10.
+     1       * EXP( -G * ALOG(1.-HT(I,J)*TLAPSE/TSFC) / (R*TLAPSE))
+   20 CONTINUE
+C
+      PRINT*,'slp has been renormalized to hPa'
+      RETURN
+      END
+cXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+c
+      SUBROUTINE PVcomp (pvor,u,v,t,ps,pkhb,cf,w1,w2,dx2,g,dsigf
+     &,                  ib1,nib,jb1,njb,kb1,nkb
+     &,                  ni,nj,nk,flcf)
+
+      real pvor(ni,nj,nk)
+     &,    u(ni,nj,nk),v(ni,nj,nk),t(ni,nj,nk),ps(ni,nj)
+     &,    pkhb(ni,nj,nk),cf(ni,nj),w1(nk),w2(nk),dsigf(nk)
+
+c
+c This routine computes potential vorticity
+c
+      fact=-g/dx2
+
+      DO 100 k=kb1,kb1+nkb-1
+      k1=k-kb1+1
+      DO 100 j=jb1,jb1+njb-1
+      j1=j-jb1+1
+      DO 100 i=ib1,ib1+nib-1
+      i1=i-ib1+1
+
+         pvor(i,j,k)=
+     &     (  ( v(i,j+1,k)-v(i,j-1,k)
+     &         -u(i+1,j,k)+u(i-1,j,k) + flcf*cf(i,j)*dx2)
+     &       *( t(i,j,k+1)*pkhb(i,j,k+1)*w1(k+1)
+     &         +t(i,j,k)*pkhb(i,j,k)*(w2(k+1)-w1(k))
+     &         -t(i,j,k-1)*pkhb(i,j,k-1)*w2(k))
+
+     &      - ( v(i,j,k+1)*w1(k+1)
+     &         +v(i,j,k)*(w2(k+1)-w1(k))
+     &         -v(i,j,k-1)*w2(k))
+     &       *( t(i,j+1,k)*pkhb(i,j+1,k)
+     &         -t(i,j-1,k)*pkhb(i,j-1,k))
+
+     &      + ( u(i,j,k+1)*w1(k+1)
+     &         +u(i,j,k)*(w2(k+1)-w1(k))
+     &         -u(i,j,k-1)*w2(k))
+     &       *( t(i+1,j,k)*pkhb(i+1,j,k)
+     &         -t(i-1,j,k)*pkhb(i-1,j,k))
+     &     )/(ps(i,j)*fact*dsigf(k))
+
+  100 continue
+
+      return
+      end
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE REORDA (AIJ,AJI,NI,NJ,NK)
+      DIMENSION AIJ(NI,NJ,NK),AJI(NJ,NI,NK)
+C
+C   THIS ROUTINE REPLACES AN ARRAY BY ONE WITH INDICIES REVERSED.
+C
+      DO 1 K=1,NK
+      DO 1 I=1,NI
+      DO 1 J=1,NJ
+      AJI(J,I,K)=AIJ(I,J,K)
+    1 CONTINUE
+C
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Vpxkap (pkhb,ps,sigh,ptop,xkap,ni,nj,nk)
+C
+      real pkhb(ni,nj,nk) ,ps(ni,nj),sigh(nk)
+c
+c  this routine computes factors for converting t to theta
+c
+      ni1=ni-1
+      nj1=nj-1
+      do 1 k=1,nk
+      do 1 j=1,nj1
+      do 1 i=1,ni1
+      pkhb(i,j,k)=(100./(ps(i,j)*sigh(k)+ptop))**xkap
+    1 continue
+c
+      return
+      end
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+C This section has the "graphics" subroutines from the processor
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      subroutine consfl (sigf, sigh, dsig, ni, nj, nk, nkp,
+     &                   ni1, nj1, R, g, gr, tlapse, dx, dx2)
+
+c      CONSTANTS, GRID ARRAYS
+
+      dimension sigf(nkp), sigh(nk), dsig(nk)
+
+      dx2=2.*dx
+      ni1=ni-1
+      nj1=nj-1
+
+      R = 287.
+      g = 9.80
+      gr=1/g
+      TLAPSE = -6.5E-03
+
+      do 3 k=1,nk
+         sigh(k)=.5*(sigf(k+1)+sigf(k))
+    3 continue
+
+      do 4 k=1,nk
+         dsig(k)=sigf(k+1)-sigf(k)
+    4 continue
+
+      return
+      end
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE KGLABG (PSIZE,PSPACE,CHLAB,NCHAR)
+      CHARACTER CHLAB*(*)
+C
+C  PUT GRAPH TITLE AT TOP AND CENTER
+C
+      CALL GETSET (PXA,PXB,PYA,PYB,XA,XB,YA,YB,LTYPE)
+      PHALF=(PXA+PXB)*0.5
+      PS=PYB+PSIZE*0.5+PSPACE
+      PRINT*,'CHLAB and NCHAR in KGLABG = ',CHLAB,' ',NCHAR
+      CALL Kplchxx (PHALF,PS,CHLAB,NCHAR,PSIZE,0.,0.,3,3)
+C
+      RETURN
+      END
+
+c
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kplot0 (xlon,xlat,clon,clat,DELX,NIDIM,NJDIM,NI,NJ,CX)
+
+      LOGICAL LLINE
+      PARAMETER (PSIZE=.016, PSPACE=.015, NLABEL=40 )
+      DIMENSION xlon(ni,nj), xlat(ni,nj),framej(4)
+      CHARACTER CLABEL*(NLABEL), CX*5, CD*6
+      DATA LLINE/.FALSE./
+C
+C  draw map background and grid
+C
+      CALL SETUSV('LW',1000)
+c uncomment this section to get the map background and/or sponge region
+c      IF (CX.eq.' DOT ') THEN
+c         PRINT*,'calling KMSUPMAP from Kplot0'
+c         CALL KMSUPMP (xlon,xlat,clon,DELX,NIDIM,NJDIM,0,1,framej)
+c set the sponge box size in Kshapes
+c         CALL Kshapes
+c      END IF
+c end tech
+
+      CALL KMSUPMP (xlon,xlat,clon,DELX,NIDIM,NJDIM,0,1,4,framej)
+      CALL Kshapes
+C
+c uncomment this section for dots and crosses
+c
+c      IF (CX.EQ.' DOT ') THEN
+cc        a centered (sort of large) dot
+c         CD=':PRL:5'
+c      ELSE IF (CX.EQ.'CROSS') THEN
+cc        a centered small times symbol
+c         CD=':KRL:4'
+c      END IF
+c
+c      IF (CX.EQ.' DOT '.OR.CX.EQ.'CROSS') THEN
+c         size = 0.02 + 0.02*REAL(1-(NIDIM-NI))
+c         PRINT*,'size = ',size
+c         PRINT*,'IDOT/2 = ',REAL(NIDIM-NI)/2.
+c         DO 10 I=1,NI
+c            Y=FLOAT(I) + REAL(NIDIM-NI)/2.
+c         DO 10 J=1,NJ
+c            X=FLOAT(J) + REAL(NJDIM-NJ)/2.
+c           
+c            CALL PLCHHQ (X,Y,CD(1:6),size,0.,0.)
+c            PRINT*,'X,Y = ',X,Y
+c   10    END DO
+c      END IF
+c end dot and cross plotting section
+C
+C  DRAW LINE EVERY 10 POINTS
+C
+      IF (LLINE) THEN
+         XA=float(1)
+         XB=float(NJ)
+         DO 12 I=11,NI,10
+            YA=FLOAT(I)
+            CALL FRSTPT (XA,YA)
+            CALL VECTOR (XB,YA)
+   12    CONTINUE
+         YA=float(1)
+         YB=float(NI)
+         DO 13 J=11,NJ,10
+            XA=FLOAT(J)
+            CALL FRSTPT (XA,YA)
+            CALL VECTOR (XA,YB)
+   13    CONTINUE
+      ENDIF
+C
+      RETURN
+  100 FORMAT('0 PLOT TITLE= ',A40)
+  101 FORMAT(A5,' GRID ',F5.1,'E ',F5.1,'N  NI,NJ=',2I4)
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kplotint
+     &           (field, fnul,WORK
+     &           ,ni,nj,nk, ndot, i1grf,j1grf,nigrf,njgrf
+     &           ,xlat,xlon,dlat,dlon,clat,clon,dx,framej,NSD
+     &           ,FLOW,FHGH,fgraph,NSET, NHGH,NDSH,SMTH, NMM,LLP,SFS
+     &           ,NCM,SHLOW,SHHIGH,NUSC, USC,LUSC,LZERO,SHL1,SLL1
+     &           ,ID,IOUT
+     &           ,cJ,cfld,XTIME,sigma,cgrknd,cdescr,cdfknd,cclbl,spval
+     &           ,ICOUNT,lbighd,ldecup,ldomap)
+
+      DIMENSION field(ni,nj,nk), fgraph(nk), sigma(nk),
+     &          xlon(ni,nj), xlat(ni,nj), WORK(nj,ni),
+     &          dlon(ni,nj), dlat(ni,nj), framej(4,0:1),
+     &          sublon(nigrf,njgrf), sublat(nigrf,njgrf),
+     &          SHLOW(3),SHHIGH(3), USC(20),LUSC(20), dmfram(4)
+      CHARACTER cfld*3, cgrknd*5,cdfknd*5, cdescr*20
+      CHARACTER*1 cclbl(nk) ,cJ*2
+      LOGICAL ldomap,lbighd,ldecup
+c sigma can be filled with either full or half levels, depending on
+c the field, but only nk elements of either
+
+
+C  call plotting routine for selected fields
+      PRINT*,' '
+      PRINT*,'plotting ',cgrknd,'  ',cfld
+
+      CALL CPSETR('SPV - special value',spval)
+      CALL CPSETI('NSD - num sig digits',NSD)
+      DO 100 K=1,nk
+      IF (fgraph(K).NE.fnul) THEN
+         CALL REORDA (field(1,1,K),WORK,ni,nj,1)
+
+         IF (nigrf+ndot.EQ.ni) THEN
+c           use the GFLAS contents, which include info from the
+c           KMSUPMAP SET call.
+            PRINT*,' '
+            PRINT*,'SET is called in Kplotint with values '
+            PRINT*,'XA,XB,YA,YB,1.,FLOAT(njgrf),1.,FLOAT(nigrf),1'
+            PRINT*,framej(1,ndot),framej(2,ndot)
+     &            ,framej(3,ndot),framej(4,ndot)
+     &            ,1.,FLOAT(njgrf),1.,FLOAT(nigrf),1
+
+            IF (ldomap) CALL GFLAS3(ndot)
+            IF (lbighd) CALL GFLAS3(2)
+            CALL SET (framej(1,ndot),framej(2,ndot)
+     &               ,framej(3,ndot),framej(4,ndot)
+     &               ,1.,FLOAT(njgrf),1.,FLOAT(nigrf),1)
+            dmfram(1:4) = framej(1:4,ndot)
+         ELSE
+c        don't use GFLAS(0,1) contents for map background
+c        do use GFLAS(2) for the big header
+           IF (lbighd) CALL GFLAS3(2)
+
+           IF (ldomap) THEN
+             IF (ndot.EQ.0) THEN
+                sublon(:,:) = dlon(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                sublat(:,:) = dlat(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                subclon = dlon(i1grf+nigrf/2,j1grf+njgrf/2)
+             ELSE
+                sublon(:,:) = xlon(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                sublat(:,:) = xlat(i1grf:i1grf+nigrf-1
+     &                            ,j1grf:j1grf+njgrf-1)
+                subclon = xlon(i1grf+nigrf/2,j1grf+njgrf/2)
+             END IF
+c            This includes a call to SET using SUPMAP information->
+c            put into dmfram so it can be used again.
+             CALL KMSUPMP(sublon,sublat,subclon,dx
+     &                   ,nigrf,njgrf,0,ID,IOUT,dmfram)
+             CALL Kshapes
+           ELSE
+c            SET is not called by SUPMAP here, so call it separately
+c            by doing the KMSUPMP calcs of the edges, and passing to
+c            SET.  REMEMBER; this will NOT make the same size frame
+c            as a call to SUPMAP would.
+             SRATIO=FLOAT(nigrf)/FLOAT(njgrf)
+             PRINT*,'SRATIO in KMSUPMP = ',SRATIO
+             IF(SRATIO.GT.1.) THEN
+                dmfram(3)=.05
+                dmfram(1)=0.5*(1.-.9/SRATIO)
+             ELSE
+                dmfram(3)=0.5*(1.-.9*SRATIO)
+                dmfram(1)=.05
+             ENDIF
+             dmfram(2)=1.-dmfram(1)
+             dmfram(4)=1.-dmfram(3)
+c shift down a bit
+             dmfram(1)=dmfram(1)-.04
+             dmfram(2)=dmfram(2)-.04
+             CALL SET (dmfram(1),dmfram(2),dmfram(3),dmfram(4),
+     &                 1.,FLOAT(njgrf),1.,FLOAT(nigrf),1)
+           END IF
+         END IF
+c        special values in label corner
+         IF (cclbl(K).NE.' ') THEN
+            fracjb = (dmfram(2)-dmfram(1))/30.
+            fracib = (dmfram(4)-dmfram(3))/15.
+            njbox = INT(REAL(njgrf)*fracjb + 1.)
+            nibox = INT(REAL(nigrf)*fracib + 1.)
+            WORK(j1grf:j1grf+njbox-1,i1grf:i1grf+nibox-1) = spval
+            WRITE(*,999) (WORK(i,i),i=1,njbox)
+ 999        FORMAT('WORK from box ',10E11.3)
+            CALL CPSETR('SPV - special value',spval)
+            boxjcen = REAL(njbox)/2. +1
+            boxicen = REAL(nibox)/2. +1
+            PRINT*,'fracjb,fracib,njbox,nibox,boxjcen,boxicen ='
+     &            ,fracjb,fracib,njbox,nibox,boxjcen,boxicen
+            chsiz = .9*fracjb
+            CALL FGFNUM(cclbl(K),1,chsiz,boxjcen,boxicen,0)
+         END IF
+
+         WRITE(*,*) 'FINC, USC = ',fgraph(K),(USC(i),i=1,NUSC)
+         
+         CALL RECNRC (WORK(j1grf,i1grf),nj,njgrf,nigrf,
+     &                FLOW,FHGH,fgraph(K),NSET,NHGH,
+     &                NDSH,SMTH,NMM,LLP,SFS,NCM,SHLOW,SHHIGH,
+     &                NUSC,USC,LUSC,LZERO,SHL1,SLL1,IMDUM)
+
+         PRINT*,'In Kplotint cdescr = ',cdescr
+         CALL Ktitle(cJ,cfld,XTIME,sigma(K),cgrknd,cdescr,cdfknd
+     &              ,ICOUNT,lbighd,ldecup)
+c         CALL PLABEL
+         CALL FRAME
+         IF (ICOUNT.GT.0) ICOUNT=ICOUNT+1
+      END IF
+ 100  END DO
+
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE KMSUPMP(xlon,xlat,clon,DELX,NI,NJ,IDOT,ID,IOUT,framej)
+
+      DIMENSION xlon(NI,NJ), xlat(NI,NJ),framej(4)
+      CHARACTER*6 ccirc
+C
+C  DETERMINE SET CALL AND CALL SUPMAP FOR NLM
+C
+      SRATIO=FLOAT(NI-IDOT)/FLOAT(NJ-IDOT)
+      IF(SRATIO.GT.1.) THEN
+         YA=.1
+c kdr         XA=0.5*(1.-.9/SRATIO)
+         XA=0.5*(1.-(1.-2.*YA)/SRATIO)
+      ELSE
+         YA=0.5*(1.-.9*SRATIO)
+         XA=.05
+      ENDIF
+      XB=1.-XA
+      YB=1.-YA
+c shift down a bit
+      YA=YA-.04
+      YB=YB-.04
+c
+c  draw exterior box
+c
+      if (ID.eq.0) then
+         x1=1.
+         y1=1.
+         x2=float(nj)
+         y2=float(ni)
+         CALL FRSTPT (X1,Y1)
+         CALL VECTOR (X1,Y2)
+         CALL VECTOR (X2,Y2)
+         CALL VECTOR (X2,Y1)
+         CALL VECTOR (X1,Y1)
+         return
+      end if
+C
+      TLAT1=60.
+      TLAT2=30.
+      C1LAT = xlat( 1, 1)
+      C1LON = xlon( 1, 1)
+      C2LAT = xlat(NI-IDOT,NJ-IDOT)
+      C2LON = xlon(NI-IDOT,NJ-IDOT)
+C
+      CALL MAPPOS (XA,XB,YA,YB)
+C
+      IF (ID.EQ.1) THEN
+         CALL SUPMAP (3,TLAT2,clon,TLAT1,C1LAT,C1LON,C2LAT,C2LON,2
+     A            ,1010,IOUT,1,IER)
+      ELSE
+         CALL SUPMAP (3,TLAT2,clon,TLAT1,C1LAT,C1LON,C2LAT,C2LON,2
+     A            ,0,IOUT,1,IER)
+c last arguments to supmap are:
+c JGRID=latlines, IUSOUT(1 for states, 0 if not),idot(0=line,1=dots)
+c
+      ENDIF
+
+      CALL GETSET(framej(1),framej(2),framej(3),framej(4)
+     &           ,DUM1,DUM2,DUM3,DUM4,IDUM)
+      PRINT*,'SET is called in KMSUPMP with values '
+      PRINT*,framej(1),framej(2),framej(3),framej(4)
+     &      ,1.,DUM1,DUM2,DUM3,DUM4,IDUM
+      CALL SET (framej(1),framej(2),framej(3),framej(4)
+     &         ,1.,FLOAT(NJ-IDOT),1.,FLOAT(NI-IDOT),1)
+
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Ktitle (cJ,cfld,XTIME,SIG,cgrknd,cdescr,cdfknd
+     &                  ,ICOUNT,lbighd,ldecup)
+
+      PARAMETER (PSIZE=.015, PSPACE=.015)
+      CHARACTER cfld*3, cgrknd*5,cdescr*20,CF1*10,CF2*100
+     &         ,cdum*4,cdfknd*5 ,cJ*2
+      LOGICAL lbighd,ldecup
+C
+C  PUT TITLE ON FIGURE
+
+      PRINT*,'cfld, cgrknd, and cdescr in Ktitle  '
+     &       ,cfld,' ',cgrknd,' ',cdescr
+c      PRINT*,'sigh in Ktitle ',SIG
+      nch = 0
+
+      IF (cgrknd(1:4).EQ.'ADJo' .OR. cgrknd(1:4).EQ.'LBDo') THEN
+c                          d   J subscript     /   d  
+         n1 = 1
+         n2 = 2
+         IF (cJ(1:1).EQ.' ') n1 = 2
+         IF (cJ(2:2).EQ.' ') n2 = 1
+         CF2(1:24) = ':PRL:*:U:J:B:'//cJ(n1:n2)//':NU:/:L:*'
+         nch = nch + 22 + (n2-n1+1)
+      END IF
+
+c if fields are not decoupled, add p before cfld
+      IF ((.NOT. ldecup) .AND.cfld.NE.'ps ' .AND.cfld(1:1).NE.'R'
+     &                   .AND.cfld.NE.'Tg ') THEN
+         CF2(nch+1:nch+1) = 'p'
+         nch = nch + 1
+      END IF
+      
+c add on cfld
+      IF (ICHAR(cfld(1:1)).GE.65 .OR. ICHAR(cfld(1:1)).LE.90) THEN
+c        first letter is capital letter
+         CF2(nch+1:nch+7)=':U:'//cfld(1:1)//':L:'
+         nch = nch + 7
+      ELSE
+c        first letter is lower case
+         CF2(nch+1:nch+1)=cfld(1:1)
+         nch = nch + 1
+      ENDIF
+c        the rest of the letters (must/will be lower case)
+      n=1
+      IF (cfld(2:2).NE.' ') n = n+1
+      IF (cfld(3:3).NE.' ') n = n+1
+      IF (n.NE.1) THEN
+         CF2(nch+1:nch+3+n-1)=':L:'//cfld(2:n)
+         nch = nch + 3 + n-1
+      ENDIF
+
+cc add on cfld
+c      IF (cfld.EQ.'T  ') THEN
+c         CF2(nch+1:nch+4)=':U:T'
+c         nch = nch + 4
+c      ELSE IF (cfld.EQ.'Tg ') THEN
+c         CF2(nch+1:nch+8)=':U:T:L:G'
+c         nch = nch + 8
+c      ELSE IF (cfld(1:1).EQ.'R') THEN
+c         CF2(nch+1:nch+9)=':U:R:L:'//cfld(2:3)
+c         nch = nch + 9
+c      ELSE
+c         n=1
+c         IF (cfld(2:2).NE.' ') n = n+1
+c         IF (cfld(3:3).NE.' ') n = n+1
+c         CF2(nch+1:nch+5+n)=':PRL:'//cfld(1:n)
+c         nch = nch + 5+n
+c      ENDIF
+ 
+      IF (cdescr.NE.'no descr') THEN
+         length = lngth(cdescr)
+         PRINT*,'cdescr(1:length) in Ktitle = ',cdescr(1:length)
+         CF2(nch+1:nch+length+5) =':PRU:'//cdescr(1:length)
+         nch = nch+length+5
+      ELSE
+         IF (cgrknd.EQ.'NLMop') THEN
+            CF2(nch+1:nch+17) = ' nonlinear (pert)'
+            nch = nch+17
+         ELSE IF (cgrknd.EQ.'NLMin') THEN
+            CF2(nch+1:nch+10) = ' initialized '
+            nch = nch+13
+         ELSE IF (cgrknd.EQ.'NLMoc') THEN
+            CF2(nch+1:nch+21) = ' nonlinear (control) '
+            nch = nch+21
+         ELSE IF (cgrknd(1:4).EQ.'TLMo' ) THEN
+c PGL 8 is a '
+            CF2(nch+1:nch+17) = ':PGL:8:R: linear '
+            nch = nch+17
+         ELSE IF (cgrknd(4:4).EQ.'b' ) THEN
+            CF2(nch+1:nch+13) = ' basic state '
+            nch = nch+13
+         ELSE IF (cgrknd(1:5).EQ.'fdiff') THEN
+            IF (cdfknd(1:3).EQ.'NLM') THEN
+               CF2(nch+1:nch+20) = ':PGL:8:R: nonlinear '
+               nch = nch + 20
+            ELSE 
+               CF2(nch+1:nch+15) = ' '//cdfknd(1:3)//' difference'
+               nch = nch + 15
+            END IF
+         ELSE IF ( cgrknd.EQ.'TLMer') THEN
+            CF2(nch+1:nch+12) = '  TLM error '
+            nch = nch+12
+         ENDIF
+      END IF
+    
+      IF (cfld(1:1).NE.'z') THEN
+         WRITE(CF2(nch+1:nch+44),110) XTIME,SIG
+         nch = nch+44
+      ELSE
+         WRITE(CF2(nch+1:nch+38),111) XTIME,SIG
+         SIG = SIG*.1
+         nch = nch+38
+      END IF
+ 110  FORMAT('    :PRL:FOR  T:U:=',F6.2,'  :PGL:R:PRU:=',F5.3)
+ 111  FORMAT('    :PRL:FOR  T:U:=',F6.2,'  P=',F4.0,' hPa')
+
+      IF (ICOUNT.GT.0 .AND. lbighd) THEN
+          CF1(1:7) = 'PLOT = '
+          WRITE (CF1(8:10),'(I3)') ICOUNT
+          CALL Kplchxx (1.0,.98,CF1,10,.012,0.,1.,3,1)
+          CF1 = cgrknd
+          CALL Kplchxx (1.0,.96,CF1,9,.012,0.,1.,3,1)
+      ENDIF
+ 
+      CALL KGLABG (PSIZE,PSPACE,CF2,nch)
+      PRINT 100,CF2
+ 
+  100 FORMAT('0 PLOT TITLE= ',A)
+
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE Kplchxx (PX,PY,CHLAB,NCHAR,PSIZE,ANGLE,CENTER,NP2U
+     &                   ,IQUAL)
+      CHARACTER CHLAB*(*)
+C
+C  CALL APPROPRIATE PLOT CHARACTER WRITING ROUTINE
+C  THE VALUE OF NP2U INDICATES IF EITHER OF PX OR PY MUST BE CONVERTED
+C  FROM FRACTIONAL PLOTTER UNITS TO USER (WORLD) UNITS.
+C
+      IF ((NP2U.EQ.1).OR.(NP2U.EQ.3)) THEN
+         PX2=CFUX(PX)
+         ELSE
+         PX2=PX
+      ENDIF
+      IF (NP2U.GE.2) THEN
+         PY2=CFUY(PY)
+         ELSE
+         PY2=PY
+      ENDIF
+
+      IF (IQUAL.EQ.3) THEN
+          CALL PLCHHQ (PX2,PY2,CHLAB(1:NCHAR),PSIZE,ANGLE,CENTER)
+      ELSE IF (IQUAL.EQ.2) THEN
+          CALL PLCHMQ (PX2,PY2,CHLAB(1:NCHAR),PSIZE,ANGLE,CENTER)
+      ELSE IF (IQUAL.EQ.1) THEN
+          CALL PLCHLQ (PX2,PY2,CHLAB(1:NCHAR),PSIZE,ANGLE,CENTER)
+      END IF
+C
+      RETURN
+      END
+C
+c x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x 
+c
+      SUBROUTINE Kshapes
+
+c     plots various user supplied shapes 
+
+      REAL x(51),y(51)
+
+c calculate and draw a circle used to calculate the circulation
+c      ni=76
+c      nj=101
+c      pi = 3.14159265
+c      DO i=1,51
+c         angle = 2.*pi*REAL(i-1)/REAL(50)
+c         x(i) = REAL((nj+1)/2)+.5 + 3.*COS(angle)
+c         y(i) = REAL(ni/2)+.5 + 3.*SIN(angle)
+c      END DO
+c      CALL CURVE(x,y,51)
+c draw the box which is the extent of the perturbation
+c      CALL LINE(40.,22.,40.,27.)
+c      CALL LINE(40.,27.,45.,27.)
+c      CALL LINE(45.,27.,45.,22.)
+c      CALL LINE(45.,22.,40.,22.)
+c          ib1 = 24
+c          jb1 = 43
+c          kb1 = 9
+c          nib = 16
+c          njb = 16
+c          nkb = 5
+
+cc moisture flux line (large )
+c          ib1 = 8
+c          jb1 = 23
+c          nib = 1
+c          njb = 9
+c speed box  (large)
+c          ib1 = 5
+c          jb1 = 23
+c          nib = 9
+c          njb = 9
+c speed box  (small)
+          ib1 = 36
+          jb1 = 48
+          nib = 6
+          njb = 6
+
+c note switch of i and j, to adopt NCAR graphics convention!
+          bi1 = REAL(jb1)
+          bj1 = REAL(ib1)
+          rnib = REAL(njb)
+          rnjb = REAL(nib)
+       CALL SETUSV('LW',2000)
+       CALL LINE(bi1       ,bj1       ,bi1+rnib-1,bj1)
+       CALL LINE(bi1+rnib-1,bj1       ,bi1+rnib-1,bj1+rnjb-1)
+       CALL LINE(bi1+rnib-1,bj1+rnjb-1,bi1       ,bj1+rnjb-1)
+       CALL LINE(bi1       ,bj1+rnjb-1,bi1       ,bj1)
+C
+      RETURN
+      END
+C
+C X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+      SUBROUTINE REORDA (AIJ,AJI,NI,NJ,NK)
+      DIMENSION AIJ(NI,NJ,NK),AJI(NJ,NI,NK)
+C
+C   THIS ROUTINE REPLACES AN ARRAY BY ONE WITH INDICIES REVERSED.
+C
+      DO 1 K=1,NK
+      DO 1 I=1,NI
+      DO 1 J=1,NJ
+      AJI(J,I,K)=AIJ(I,J,K)
+    1 CONTINUE
+C
+      RETURN
+      END
+C
+C  X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X X
+C
+'EOFD'
+
+cft77 -e sz progb.f
+bld rv progb.a progb.o
+
+
+dispose progb.f /RAEDER/ADJOINT/PROGS/SOURCE/LIBK2 \
+   copy 365 forward_adjoint_boundary_test_nonlinear_subroutines
+dispose progb.a /RAEDER/ADJOINT/PROGS/OBJECT/LIBK2 \
+   copy 365 forward_adjoint_boundary_test_nonlinear_subroutines
+
+rcp progb.l raeder@chaos.cgd.ucar.edu:/data/raeder/libK2.out
+
+ja -clst
+ls -l
+exit
+
+'JOBEND'
+rsh chaos.cgd.ucar.edu -l raeder beep
+rcp log raeder@chaos.cgd.ucar.edu:/data/raeder/libK2.log
+
+exit
+
+
+
+

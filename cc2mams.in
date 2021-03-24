@@ -1,0 +1,185 @@
+ $LFILES
+    ; NUMBER OF CCM FILES TO READ
+   NVOLUS= 1       
+  ;
+    ; NUMBER OF TIMES ON EACH CCM FILE (NVOLUS VALUES)
+    ; =1 IF TIME IS TO BE INTERPOLATED, =0 IF NOT
+  ; DRI Seabreeze 9/16/87 00Z to 9/20/87 12Z
+    ,NTIMES= 10   
+    ,NREADS= 10*1
+  ; CONVLOW S3 0Z 6/16/97-12Z 6/20/97 (forecast verify at 0Z 6/18/97)
+  ;  NVOLUS= 1       
+  ; ,NTIMES= 10
+  ; ,NREADS= 10*1 
+  ; J89EAST (Luc) 4 days; 1 day before Jrain S2 forec and 2 days after
+  ;  NVOLUS= 2       
+  ; ,NTIMES= 2*10
+  ; ,NREADS= 7*0,3*1 ,6*1,4*0
+  ; Jrain S2 (J89 June89) 6/12/89  (89<92 means 14 level data)
+  ;  starts at hour 108
+  ;  NVOLUS= 2       
+  ; ,NTIMES= 2*10
+  ; ,NREADS= 2*0,8*1 ,5*1,5*0
+  ; Jrain W2 (D4T1)
+  ; ,NTIMES= 2*10
+  ; ,NREADS= 5*0,5*1,4*1,6*0
+  ; Pred D3T1 
+  ; ,NTIMES= 10
+  ; ,NREADS= 5*0,5*1
+  ; Rolf 4060 60km  96081600-1800
+  ; ,NTIMES= 32
+  ; ,NREADS= 5*1,27*0
+  ;,NTIMES= 30
+  ; alps3 NREADS = 6*0,7*1,17*0
+  ; alps ,NREADS= 14*0,9*1,7*0
+  ; alps case 2 ,NREADS= 20*0,7*1,3*0
+  ; explos 
+  ;  ,NTIMES= 30,26
+  ;  ,NREADS= 22*0,8*1
+  ;         , 3*1,23*0
+  ; Technote Test Case ,NREADS= 24*0,3*1,3*0
+  ; Gulf of Mex  (2/12/88 - ) ,NTIMES= 30,28
+  ;  ,NREADS= 22*0,8*1
+  ;          ,3*1,25*0
+  ; Gulf of Mex  (2/11/88 - ) 
+  ;  ,NTIMES= 10
+  ;  ,NREADS= 10*1
+  ; Can low
+  ; ,NTIMES= 2*10
+  ; ,NREADS= 2*0,8*1  
+  ;         ,3*1,5*0
+  ; Hammill US
+  ; ,NTIMES= 10
+  ; ,NREADS= 5*1,5*0
+ $END
+ $LGRID2
+  ;DRI Seabreeze Sep 87
+   PTOPCB =  .1,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+   CLAT =  37.5,
+   CLON =  -122.,
+   SIGMAF = 0.0,.20,.30,.40,.45,.50,.54,.58,.62,.66,.70
+               ,.73,.76,.79,.82,.85,.88,.90,.92,.94,.96,.98,1.0
+   DELX =  18.E3,
+  ;S3 CONVLOW
+  ;   CLAT =  40.0,
+  ;   CLON =  -100.0,
+  ;   DELX =  50.E3,
+  ;   DELX =  80.E3,
+  ;   PTOPCB =   1.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;   SIGMAF=0.,.05,.1,.15,.2,.25,.3,.35,.4,.45,
+  ;          .5,.55,.6,.65,.7,.75,.8,.85,.9,.95,1.
+  ;J89EAST   and CONVLOW66 = S3 with same domain as J89EAST
+  ;   CLAT =  38.0,
+  ;   CLON =  -90.0,
+  ;   DELX =  50.E3,
+  ;   PTOPCB =   10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;   SIGMAF=0.,.0625,.125,.1875,.25,.3125,.375,.4375,
+  ;          .5,.5625,.625,.6875,.75,.8125,.875,.9375,1.
+  ;S2  June89 J89  in j89nbsn.out
+  ;  CLAT =  43.5,
+  ;  CLON =  -101.5,
+  ;  DELX =  80.E3,
+  ;  PTOPCB =   10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  SIGMAF=0.,.05,.1,.15,.2,.25,.3,.35,.4,.45,
+  ;         .5,.55,.6,.65,.7,.75,.8,.85,.9,.95,1.
+  ; W4
+  ; PTOPCB =   1.0,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ; CLAT =  38.,
+  ; CLON =  -102.,
+  ; DELX =  80.E3,
+  ; SIGMAF=0.,.05,.1,.15,.2,.25,.3,.35,.4,.45,
+  ;        .5,.55,.6,.65,.7,.75,.8,.85,.9,.95,1.
+  ; W2  SIGMAF = 0.,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.
+  ; Pred D3T1
+  ;  PTOPCB =   1.0,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  41.,
+  ;  CLON =  -115.,
+  ;  DELX =  40.E3,
+  ;  SIGMAF = 0.,0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45, 
+  ;          0.5,0.55,0.6,0.65,0.7,0.75,0.8,0.85,0.9,0.95,1.
+  ;Rolf 4060 60km
+  ;  PTOPCB =   2.5,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  40.,
+  ;  CLON =  -115.,
+  ;  DELX =  60.E3,
+  ;  SIGMAF = 0., 0.025,.05, 0.075,0.18, 0.28, 0.38, 0.5,0.6,0.7,0.8, 1.
+  ;      MISTAKE; the 0.9 was omitted from the output that I read to
+  ;               set up this case;  there should be 13 full levels
+  ;  CLAT =  40.,
+  ;  CLON =  -98.,
+  ;  DELX =  30.E3,
+  ;  PTOPCB =   10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  SIGMAF = .00,.1,.2,.3,.4,.5,.6,.7,.8,.84,.88,.92,.96,1.0,
+  ;Gulf of Mex
+  ;  PTOPCB =  10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  31.,
+  ;  CLON =  -97.,
+  ;  SIGMAF = .00,.1,.2,.3,.4,.5,.6,.7,.8,.84,.88,.92,.96,1.0,
+  ; 50km
+  ;  DELX =  50.E3,
+  ; PTOPCB =  1.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ; 19 levels
+  ; SIGMAF = .00,.1,.2,.3,.4,.5,.56,.62,.67,
+  ;           .72,.76,.80,.83,.86,.89,.92,.94,.96,.98,1.0,
+  ; 20 levels
+  ; SIGMAF = .00,.1,.2,.3,.4,.5,.56,.62,.67,
+  ;           .72,.76,.80,.83,.86,.89,.92,.94,.96,.98,.99,1.0,
+  ; 80km
+  ;  DELX =  80.E3,
+  ; old gulf
+  ;  SIGMAF = .00,.05,.1,.15,.2,.25,.3,.35,.4,.45,.5,.55,
+  ;                   .6,.65,.7,.75,.8,.85,.9,.95,1.0,
+  ;   This is what's actually used
+  ; SIGMAF = .00,.1,.2,.3,.4,.5,.6,.7,.8,.84,.88,.92,.96,1.0,
+  ;?
+  ; Expl (?)
+  ;  PTOPCB =   1.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  37.,
+  ;  CLON =  -75.,
+  ;  DELX =  120.E3,
+  ;  SIGMAF = .00,.03,.06, .09,.12,.15,.18,.21,.24,.27, .30, 
+  ;           .35,.40,.45,
+  ;           .50,.55, .60,.65, .70,.73,.76,.78,.80,.82,.84,.86,.88,
+  ;           .90,.92,.94,.96,.98, 1.0,
+  ;40km
+  ;  PTOPCB =   10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  32.,
+  ;  CLON =  -98.,
+  ;  DELX =  40.E3,
+  ;  SIGMAF = .00,.1,.2,.3,.4,.5,.6, .65,.7,.75,.8,.85,.9,.95,1.0,
+  ;Can low 80km
+  ;  CLAT =  46.5,
+  ;  CLON =  -107.5,
+  ;  DELX =  80.E3,
+  ;  PTOPCB =   10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  SIGMAF = .00,.1,.2,.3,.4,.5,.6,.7,.8,.9,1.0,
+  ;alps
+  ;  PTOPCB =   5.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  45.,
+  ;  CLON =  10.,
+  ;  DELX =  60.E3,
+  ;  SIGMAF = .00, .09, .16, .23, .30, .37, .44,
+  ;        .51, .58, .65, .72, .79, .86, .93, 1.0,
+  ;alps3
+  ;  PTOPCB =   10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  53.,
+  ;  CLON =  -3.,
+  ;  DELX =  120.E3,
+  ;  SIGMAF = .00, .1, .2, .3, .4, .5, .6,.7, .8, .9, 1.0
+  ;  IGMAF = .00, .02, .04, .08, .14, .21, .30, .40,
+  ;        .50, .60, .70, .79, .87, .93, .97, .99, 1.0,
+           ; SIGMA AT INTEGER-INDEXED LEVELS IN MM4 (KX+1 VALUES)
+  ;Tech Note Test Case
+  ; PTOPCB =   5.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ; CLAT =  37.,
+  ; CLON =  -75.,
+  ; DELX =  250.E3,
+  ; SIGMAF = 0.0, .2, .4, .6, .8, 1.0
+  ;Expl2
+  ;  PTOPCB =   10.,           ; PRESSURE AT MM4 TOP IN UNITS OF CB
+  ;  CLAT =  37.,
+  ;  CLON =  -75.,
+  ;  DELX =  60.E3,
+  ;  SIGMAF = 0.0,.1, .2,.3, .4,.5, .6,.7, .8,.9, 1.0
+ $END
+ORO      ; LIST OF FIELDS
